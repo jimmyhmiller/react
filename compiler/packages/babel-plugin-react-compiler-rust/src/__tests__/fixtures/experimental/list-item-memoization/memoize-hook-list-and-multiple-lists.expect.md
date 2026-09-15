@@ -65,104 +65,108 @@ const _BlockTemplate3 = _createBlockTemplate([
 ]);
 
 function Lists(t0) {
-  const $ = _c(13);
-  const _listItemCache = useListItemMemoCache();
+  const $ = _c(15);
   const _listItemCache2 = useListItemMemoCache();
+  const _listItemCache = useListItemMemoCache();
   const { left, right } = t0;
   const [selected, setSelected] = useState(null);
   let t1;
-  if ($[0] !== left || $[1] !== selected) {
-    let t2;
-    if ($[3] !== selected) {
-      t2 = (item) => {
-        const t5 = item.id;
-        const t6 = item.id === selected ? "on" : "";
-        const t7 = item.label;
-        const $0 = _listItemCache.next(6, t5);
-        let t8;
-        if (
-          $0[0] !== item ||
-          $0[1] !== setSelected ||
-          $0[2] !== t5 ||
-          $0[3] !== t6 ||
-          $0[4] !== t7
-        ) {
-          t8 = (
-            <_BlockTemplate2
-              key={t5}
-              v={[t6, () => setSelected(item.id), t7]}
-            />
-          );
-          $0[0] = item;
-          $0[1] = setSelected;
-          $0[2] = t5;
-          $0[3] = t6;
-          $0[4] = t7;
-          $0[5] = t8;
-        } else {
-          t8 = $0[5];
-        }
-        return t8;
-      };
-      $[3] = selected;
-      $[4] = t2;
-    } else {
-      t2 = $[4];
-    }
-    t1 = left.map(t2);
-    $[0] = left;
-    $[1] = selected;
-    $[2] = t1;
+  if ($[0] !== _listItemCache) {
+    t1 = (item) => {
+      const t6 = item.id;
+      const t7 = _listItemCache.is(0, item.id) ? "on" : "";
+      const t8 = item.label;
+      const $0 = _listItemCache.next(6, t6);
+      let t9;
+      if (
+        $0[0] !== item ||
+        $0[1] !== setSelected ||
+        $0[2] !== t6 ||
+        $0[3] !== t7 ||
+        $0[4] !== t8
+      ) {
+        t9 = (
+          <_BlockTemplate2 key={t6} v={[t7, () => setSelected(item.id), t8]} />
+        );
+        $0[0] = item;
+        $0[1] = setSelected;
+        $0[2] = t6;
+        $0[3] = t7;
+        $0[4] = t8;
+        $0[5] = t9;
+      } else {
+        t9 = $0[5];
+      }
+      return t9;
+    };
+    $[0] = _listItemCache;
+    $[1] = t1;
   } else {
-    t1 = $[2];
+    t1 = $[1];
   }
   let t2;
-  if ($[5] !== right) {
-    let t3;
-    if ($[7] === Symbol.for("react.memo_cache_sentinel")) {
-      t3 = (item_0) => {
-        const t5 = item_0.id;
-        const t6 = `${item_0.label} (${item_0.count})`;
-        const $0 = _listItemCache2.next(3, t5);
-        let t7;
-        if ($0[0] !== t5 || $0[1] !== t6) {
-          t7 = <_BlockTemplate3 key={t5} v={[t6]} />;
-          $0[0] = t5;
-          $0[1] = t6;
-          $0[2] = t7;
-        } else {
-          t7 = $0[2];
-        }
-        return t7;
-      };
-      $[7] = t3;
-    } else {
-      t3 = $[7];
-    }
-    t2 = right.map(t3);
-    $[5] = right;
+  if (
+    $[2] !== _listItemCache ||
+    $[3] !== left ||
+    $[4] !== selected ||
+    $[5] !== t1
+  ) {
+    t2 = _listItemCache.map(left, t1, [selected]);
+    $[2] = _listItemCache;
+    $[3] = left;
+    $[4] = selected;
+    $[5] = t1;
     $[6] = t2;
   } else {
     t2 = $[6];
   }
   let t3;
-  if ($[8] !== t1 || $[9] !== t2) {
-    t3 = [t1, t2];
-    $[8] = t1;
-    $[9] = t2;
-    $[10] = t3;
+  if ($[7] !== right) {
+    let t4;
+    if ($[9] === Symbol.for("react.memo_cache_sentinel")) {
+      t4 = (item_0) => {
+        const t6 = item_0.id;
+        const t7 = `${item_0.label} (${item_0.count})`;
+        const $0 = _listItemCache2.next(3, t6);
+        let t8;
+        if ($0[0] !== t6 || $0[1] !== t7) {
+          t8 = <_BlockTemplate3 key={t6} v={[t7]} />;
+          $0[0] = t6;
+          $0[1] = t7;
+          $0[2] = t8;
+        } else {
+          t8 = $0[2];
+        }
+        return t8;
+      };
+      $[9] = t4;
+    } else {
+      t4 = $[9];
+    }
+    t3 = right.map(t4);
+    $[7] = right;
+    $[8] = t3;
   } else {
-    t3 = $[10];
+    t3 = $[8];
   }
   let t4;
-  if ($[11] !== t3) {
-    t4 = <_BlockTemplate v={t3} />;
+  if ($[10] !== t2 || $[11] !== t3) {
+    t4 = [t2, t3];
+    $[10] = t2;
     $[11] = t3;
     $[12] = t4;
   } else {
     t4 = $[12];
   }
-  return t4;
+  let t5;
+  if ($[13] !== t4) {
+    t5 = <_BlockTemplate v={t4} />;
+    $[13] = t4;
+    $[14] = t5;
+  } else {
+    t5 = $[14];
+  }
+  return t5;
 }
 
 ```

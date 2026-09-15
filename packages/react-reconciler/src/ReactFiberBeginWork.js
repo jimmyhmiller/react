@@ -191,6 +191,7 @@ import {
   BlockSlotList,
   BlockSlotFiber,
   blockListItemNeedsFiber,
+  getBlockListChanges,
   getBlockSlotInlineItems,
   getBlockInlineItemSlotItems,
   getBlockInlineItemKey,
@@ -2027,7 +2028,21 @@ function updateHostBlock(current: Fiber | null, workInProgress: Fiber) {
     }
     const currentList: null | $ReadOnlyArray<mixed> =
       matchingCurrent !== null ? matchingCurrent.memoizedProps.list : null;
-    let kind = getBlockSlotValueKind(children);
+    // The list the slot rendered inline, entirely (without a slot fiber) or
+    // partly (with a slot fiber for some items), if it did.
+    const previousInlineList: mixed =
+      currentList !== null
+        ? currentList
+        : matchingCurrent === null && currentValues !== null
+          ? getBlockSlotValue(template, currentValues, i)
+          : null;
+    // A list that records the items it replaced in such a list is a list of
+    // keyed blocks like it, and only the replaced items need to be checked.
+    const listChanges = isArray(previousInlineList)
+      ? getBlockListChanges(children, previousInlineList)
+      : null;
+    let kind =
+      listChanges !== null ? BlockSlotList : getBlockSlotValueKind(children);
     if (
       matchingCurrent !== null &&
       currentList === null &&
@@ -2052,6 +2067,22 @@ function updateHostBlock(current: Fiber | null, workInProgress: Fiber) {
     let adopt = matchingCurrent === null || currentList !== null;
     if (kind === BlockSlotList) {
       const items: $ReadOnlyArray<mixed> = children as any;
+      if (listChanges !== null && currentList === null) {
+        // The list was rendered without fibers, and the other items are the
+        // same elements, so they still need none.
+        let needsFiber = false;
+        const previous: $ReadOnlyArray<mixed> = previousInlineList as any;
+        for (let k = 0; k < listChanges.length; k++) {
+          const index = listChanges[k];
+          if (blockListItemNeedsFiber(items[index], previous[index])) {
+            needsFiber = true;
+            break;
+          }
+        }
+        if (!needsFiber) {
+          continue;
+        }
+      }
       // The items that have fibers keep them while they are in the list, so
       // that they keep their host instances.
       let fiberKeys: null | Map<string, mixed> = null;

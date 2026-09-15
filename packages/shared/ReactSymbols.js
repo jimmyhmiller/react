@@ -46,6 +46,10 @@ export const REACT_MEMO_CACHE_SENTINEL: symbol = Symbol.for(
   'react.memo_cache_sentinel',
 );
 
+// A property of a list produced by unstable_useListItemMemoCache's `map`,
+// describing which items differ from the list it produced before.
+export const REACT_LIST_CHANGES: symbol = Symbol.for('react.list_changes');
+
 export const REACT_VIEW_TRANSITION_TYPE: symbol = Symbol.for(
   'react.view_transition',
 );

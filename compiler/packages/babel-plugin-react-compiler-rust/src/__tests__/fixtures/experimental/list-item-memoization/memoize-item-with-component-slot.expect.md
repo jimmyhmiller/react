@@ -189,95 +189,95 @@ function List(t0) {
   const _listItemCache = useListItemMemoCache();
   const { todos, editingId, onToggle, onSave } = t0;
   let t1;
-  if (
-    $[0] !== editingId ||
-    $[1] !== onSave ||
-    $[2] !== onToggle ||
-    $[3] !== todos
-  ) {
-    let t2;
-    if ($[5] !== editingId || $[6] !== onSave || $[7] !== onToggle) {
-      t2 = (todo) => {
-        const t4 = todo.id;
-        const todo$0 = todo;
-        const editing = todo.id === editingId;
-        const onToggle$0 = onToggle;
-        const onSave$0 = onSave;
-        let className = "";
-        if (todo$0.completed) {
-          className = "completed";
-        }
-        if (editing) {
-          className = className + " editing";
-        }
-        const t5 = todo$0.title;
-        const t6 = editing ? (
-          <EditField
-            initialTitle={todo$0.title}
-            onSave={(title) => onSave$0(todo$0.id, title)}
+  if ($[0] !== _listItemCache || $[1] !== onSave || $[2] !== onToggle) {
+    t1 = (todo) => {
+      const t5 = todo.id;
+      const todo$0 = todo;
+      const editing = _listItemCache.is(0, todo.id);
+      const onToggle$0 = onToggle;
+      const onSave$0 = onSave;
+      let className = "";
+      if (todo$0.completed) {
+        className = "completed";
+      }
+      if (editing) {
+        className = className + " editing";
+      }
+      const t6 = todo$0.title;
+      const t7 = editing ? (
+        <EditField
+          initialTitle={todo$0.title}
+          onSave={(title) => onSave$0(todo$0.id, title)}
+        />
+      ) : null;
+      const $0 = _listItemCache.next(7, t5);
+      let t8;
+      if (
+        $0[0] !== className ||
+        $0[1] !== onToggle$0 ||
+        $0[2] !== t5 ||
+        $0[3] !== t6 ||
+        $0[4] !== t7 ||
+        $0[5] !== todo$0
+      ) {
+        t8 = (
+          <_BlockTemplate
+            key={t5}
+            v={[className, () => onToggle$0(todo$0.id), t6, t7]}
           />
-        ) : null;
-        const $0 = _listItemCache.next(7, t4);
-        let t7;
-        if (
-          $0[0] !== className ||
-          $0[1] !== onToggle$0 ||
-          $0[2] !== t4 ||
-          $0[3] !== t5 ||
-          $0[4] !== t6 ||
-          $0[5] !== todo$0
-        ) {
-          t7 = (
-            <_BlockTemplate
-              key={t4}
-              v={[className, () => onToggle$0(todo$0.id), t5, t6]}
-            />
-          );
-          $0[0] = className;
-          $0[1] = onToggle$0;
-          $0[2] = t4;
-          $0[3] = t5;
-          $0[4] = t6;
-          $0[5] = todo$0;
-          $0[6] = t7;
-        } else {
-          t7 = $0[6];
-        }
-        return t7;
-      };
-      $[5] = editingId;
-      $[6] = onSave;
-      $[7] = onToggle;
-      $[8] = t2;
-    } else {
-      t2 = $[8];
-    }
-    t1 = todos.map(t2);
-    $[0] = editingId;
+        );
+        $0[0] = className;
+        $0[1] = onToggle$0;
+        $0[2] = t5;
+        $0[3] = t6;
+        $0[4] = t7;
+        $0[5] = todo$0;
+        $0[6] = t8;
+      } else {
+        t8 = $0[6];
+      }
+      return t8;
+    };
+    $[0] = _listItemCache;
     $[1] = onSave;
     $[2] = onToggle;
-    $[3] = todos;
-    $[4] = t1;
+    $[3] = t1;
   } else {
-    t1 = $[4];
+    t1 = $[3];
   }
   let t2;
-  if ($[9] !== t1) {
-    t2 = [t1];
-    $[9] = t1;
-    $[10] = t2;
+  if (
+    $[4] !== _listItemCache ||
+    $[5] !== editingId ||
+    $[6] !== t1 ||
+    $[7] !== todos
+  ) {
+    t2 = _listItemCache.map(todos, t1, [editingId]);
+    $[4] = _listItemCache;
+    $[5] = editingId;
+    $[6] = t1;
+    $[7] = todos;
+    $[8] = t2;
   } else {
-    t2 = $[10];
+    t2 = $[8];
   }
   let t3;
-  if ($[11] !== t2) {
-    t3 = <_BlockTemplate2 v={t2} />;
-    $[11] = t2;
-    $[12] = t3;
+  if ($[9] !== t2) {
+    t3 = [t2];
+    $[9] = t2;
+    $[10] = t3;
   } else {
-    t3 = $[12];
+    t3 = $[10];
   }
-  return t3;
+  let t4;
+  if ($[11] !== t3) {
+    t4 = <_BlockTemplate2 v={t3} />;
+    $[11] = t3;
+    $[12] = t4;
+  } else {
+    t4 = $[12];
+  }
+  return t4;
 }
 
 ```

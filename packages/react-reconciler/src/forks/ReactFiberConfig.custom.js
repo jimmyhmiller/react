@@ -308,6 +308,7 @@ export const blockListItemNeedsFiber = $$$config.blockListItemNeedsFiber;
 export const blockSlotNeedsCommit = $$$config.blockSlotNeedsCommit;
 export const getBlockSlotInlineNode = $$$config.getBlockSlotInlineNode;
 export const setBlockSlotContent = $$$config.setBlockSlotContent;
+export const getBlockListChanges = $$$config.getBlockListChanges;
 export const getBlockSlotInlineItems = $$$config.getBlockSlotInlineItems;
 export const getBlockInlineItemSlotItems =
   $$$config.getBlockInlineItemSlotItems;

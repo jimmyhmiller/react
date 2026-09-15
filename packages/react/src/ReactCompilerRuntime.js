@@ -8,8 +8,12 @@
  */
 
 import {useMemoCache} from './ReactHooks';
-import {REACT_MEMO_CACHE_SENTINEL} from 'shared/ReactSymbols';
+import {
+  REACT_LIST_CHANGES,
+  REACT_MEMO_CACHE_SENTINEL,
+} from 'shared/ReactSymbols';
 import {enableNoCloningMemoCache} from 'shared/ReactFeatureFlags';
+import isArray from 'shared/isArray';
 
 export {useMemoCache as c};
 
@@ -35,14 +39,142 @@ export {useMemoCache as c};
 //   cache that another render reads. Like with enableNoCloningMemoCache, a
 //   later render may start from the caches filled by a render that did not
 //   commit; this is safe because every output is written with its inputs.
+//
+// Selections. When the callback reads a value of the component only to
+// compare it with `===` or `!==` (such as `item.id === selectedId`), the
+// compiler calls `map(array, callback, selections)` instead of
+// `array.map(callback)`, and replaces each comparison with
+// `is(selectionIndex, comparand)`. `is` returns exactly
+// `selections[selectionIndex] === comparand`, and records the comparand for the
+// item being computed.
+//
+// When `map` is called with the same array and the same callback as the
+// previous time, only the selections can have changed. An item's result can
+// then only differ if one of its comparisons can: if the item compared a
+// changed selection with a value equal to the selection's previous or new
+// value. Every other item would evaluate the same comparisons with the same
+// results, so (render being pure) it would return the same element. `map`
+// calls the callback only for the items that can differ, and returns a copy of
+// the previous result with those items replaced. The copy records the previous
+// result and the replaced indices (REACT_LIST_CHANGES), which lets a renderer
+// that committed the previous result update only those items.
+//
+// The callback's identity stands for everything else it reads: the compiler
+// memoizes it on those values, and only the selections are read through `is`.
+//
+// Recording comparands costs a little for every item, and is only useful if
+// the same array is mapped again. `map` records them when it maps the same
+// array as the previous time (so the first change of a selection after the
+// array changed maps every item, and later ones only the changed items).
+
+// $FlowFixMe[method-unbinding]
+const ArrayPrototypeMap = Array.prototype.map;
+
+// The comparand of an item that did not compare a selection.
+const NOT_COMPARED: {...} = {};
+
+// The comparands of an item that compared a selection more than once.
+class MultipleComparands {
+  values: Array<mixed>;
+  constructor(values: Array<mixed>) {
+    this.values = values;
+  }
+}
+
+export type ListChanges = {
+  base: $ReadOnlyArray<mixed>,
+  // Ascending indices of the items that differ from `base`.
+  indices: $ReadOnlyArray<number>,
+};
+
+type MappedList = {
+  array: $ReadOnlyArray<mixed>,
+  callback: (item: mixed, index: number, array: $ReadOnlyArray<mixed>) => mixed,
+  selections: $ReadOnlyArray<mixed>,
+  result: Array<mixed>,
+  // comparands[selection][item]: NOT_COMPARED, a comparand, or
+  // MultipleComparands. Null if they were not recorded.
+  comparands: null | Array<Array<mixed>>,
+  // For each selection, the items by comparand. Built when first needed.
+  itemsByComparand: Array<null | Map<mixed, Array<number>>>,
+};
+
+function addComparand(
+  itemsByComparand: Map<mixed, Array<number>>,
+  comparand: mixed,
+  item: number,
+): void {
+  if (comparand === NOT_COMPARED) {
+    return;
+  }
+  if (comparand instanceof MultipleComparands) {
+    const values = comparand.values;
+    for (let i = 0; i < values.length; i++) {
+      addComparand(itemsByComparand, values[i], item);
+    }
+    return;
+  }
+  const items = itemsByComparand.get(comparand);
+  if (items === undefined) {
+    itemsByComparand.set(comparand, [item]);
+  } else if (items[items.length - 1] !== item) {
+    items.push(item);
+  }
+}
+
+function removeComparand(
+  itemsByComparand: Map<mixed, Array<number>>,
+  comparand: mixed,
+  item: number,
+): void {
+  if (comparand === NOT_COMPARED) {
+    return;
+  }
+  if (comparand instanceof MultipleComparands) {
+    const values = comparand.values;
+    for (let i = 0; i < values.length; i++) {
+      removeComparand(itemsByComparand, values[i], item);
+    }
+    return;
+  }
+  const items = itemsByComparand.get(comparand);
+  if (items === undefined) {
+    return;
+  }
+  const index = items.indexOf(item);
+  if (index !== -1) {
+    items.splice(index, 1);
+    if (items.length === 0) {
+      itemsByComparand.delete(comparand);
+    }
+  }
+}
+
 class ListItemMemoCache {
-  // Item caches and keys of the latest render that invoked the callback.
-  previous: Array<Array<mixed>> = [];
+  // Item caches and keys of the latest render that invoked the callback, by
+  // call (or, for `map`, by item index).
+  previous: Array<void | Array<mixed>> = [];
   previousKeys: Array<mixed> = [];
-  previousByKey: null | Map<mixed, Array<mixed>> = null;
-  // Item caches and keys of the current render, once it invokes the callback.
-  current: null | Array<Array<mixed>> = null;
+  previousByKey: null | Map<mixed, void | Array<mixed>> = null;
+  // Item caches and keys of the current render, once it invokes the callback
+  // outside of `map`.
+  current: null | Array<void | Array<mixed>> = null;
   currentKeys: Array<mixed> = [];
+
+  // The current selection values (see `map`).
+  selections: $ReadOnlyArray<mixed> = [];
+  // While `map` invokes the callback for an item: the item's index (-1
+  // otherwise), and where the invocation's cache, key and comparands are
+  // written (at `writeIndex`).
+  cursor: number = -1;
+  writeIndex: number = 0;
+  writeCaches: Array<void | Array<mixed>> = [];
+  writeKeys: Array<mixed> = [];
+  // writeComparands[selection][writeIndex], or null if comparands are not
+  // recorded.
+  writeComparands: null | Array<Array<mixed>> = null;
+  // The latest completed `map`.
+  mapped: null | MappedList = null;
 
   startRender(): void {
     const current = this.current;
@@ -64,11 +196,15 @@ class ListItemMemoCache {
   }
 
   next(size: number, key?: mixed): Array<mixed> {
+    const cursor = this.cursor;
     let current = this.current;
-    if (current === null) {
-      current = this.current = [];
+    let index = cursor;
+    if (cursor === -1) {
+      if (current === null) {
+        current = this.current = [];
+      }
+      index = current.length;
     }
-    const index = current.length;
     const previousList = this.previous;
     let previous = index < previousList.length ? previousList[index] : null;
     if (key !== undefined && this.previousKeys[index] !== key) {
@@ -85,11 +221,10 @@ class ListItemMemoCache {
           }
         }
       }
-      const byKey = previousByKey.get(key);
-      previous = byKey === undefined ? null : byKey;
+      previous = previousByKey.get(key);
     }
     let cache;
-    if (previous === null || previous.length !== size) {
+    if (previous == null || previous.length !== size) {
       cache = new Array<mixed>(size);
       for (let i = 0; i < size; i++) {
         cache[i] = REACT_MEMO_CACHE_SENTINEL;
@@ -99,9 +234,249 @@ class ListItemMemoCache {
     } else {
       cache = previous.slice();
     }
-    current.push(cache);
-    this.currentKeys.push(key);
+    if (cursor === -1) {
+      (current as any).push(cache);
+      this.currentKeys.push(key);
+    } else {
+      this.writeCaches[this.writeIndex] = cache;
+      this.writeKeys[this.writeIndex] = key;
+    }
     return cache;
+  }
+
+  // `selections[selection] === comparand`, recording the comparand for the
+  // item that `map` is computing.
+  is(selection: number, comparand: mixed): boolean {
+    const writeComparands = this.writeComparands;
+    if (writeComparands !== null) {
+      const comparands = writeComparands[selection];
+      const index = this.writeIndex;
+      const existing = comparands[index];
+      if (existing === NOT_COMPARED) {
+        comparands[index] = comparand;
+      } else if (existing instanceof MultipleComparands) {
+        existing.values.push(comparand);
+      } else {
+        comparands[index] = new MultipleComparands([existing, comparand]);
+      }
+    }
+    return this.selections[selection] === comparand;
+  }
+
+  // `array.map(callback)`, where the callback reads `selections` through `is`.
+  map(
+    array: $ReadOnlyArray<mixed>,
+    callback: (
+      item: mixed,
+      index: number,
+      array: $ReadOnlyArray<mixed>,
+    ) => mixed,
+    selections: $ReadOnlyArray<mixed>,
+  ): mixed {
+    this.selections = selections;
+    if (!isArray(array) || array.map !== ArrayPrototypeMap) {
+      // Only arrays are mapped item by item. Anything else with a `map`
+      // method (or an array whose `map` was replaced) is called as written.
+      this.mapped = null;
+      return (array as any).map(callback);
+    }
+    const mapped = this.mapped;
+    if (mapped === null || mapped.array !== array) {
+      return this.mapAllItems(array, callback, selections, false);
+    }
+    if (
+      mapped.callback === callback &&
+      mapped.selections.length === selections.length
+    ) {
+      let changed = false;
+      for (let i = 0; i < selections.length; i++) {
+        if (selections[i] !== mapped.selections[i]) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) {
+        // Every item would be computed with the same inputs.
+        return mapped.result;
+      }
+      if (mapped.comparands !== null) {
+        return this.mapChangedItems(mapped, mapped.comparands, selections);
+      }
+    }
+    return this.mapAllItems(array, callback, selections, true);
+  }
+
+  // Makes `next` and `is` write to the given arrays, and returns the arrays
+  // for the comparands.
+  startWriting(
+    caches: Array<void | Array<mixed>>,
+    keys: Array<mixed>,
+    selectionCount: number,
+    length: number,
+    record: boolean,
+  ): null | Array<Array<mixed>> {
+    let comparands: null | Array<Array<mixed>> = null;
+    if (record) {
+      comparands = [];
+      for (let i = 0; i < selectionCount; i++) {
+        comparands.push(new Array<mixed>(length).fill(NOT_COMPARED));
+      }
+    }
+    this.writeCaches = caches;
+    this.writeKeys = keys;
+    this.writeComparands = comparands;
+    return comparands;
+  }
+
+  stopWriting(): void {
+    this.cursor = -1;
+    this.writeIndex = 0;
+    this.writeCaches = [];
+    this.writeKeys = [];
+    this.writeComparands = null;
+  }
+
+  mapAllItems(
+    array: $ReadOnlyArray<mixed>,
+    callback: (
+      item: mixed,
+      index: number,
+      array: $ReadOnlyArray<mixed>,
+    ) => mixed,
+    selections: $ReadOnlyArray<mixed>,
+    record: boolean,
+  ): Array<mixed> {
+    const length = array.length;
+    const result = new Array<mixed>(length);
+    const caches = new Array<void | Array<mixed>>(length);
+    const keys = new Array<mixed>(length);
+    const comparands = this.startWriting(
+      caches,
+      keys,
+      selections.length,
+      length,
+      record,
+    );
+    try {
+      for (let i = 0; i < length; i++) {
+        // Like Array.prototype.map, skip the holes of a sparse array.
+        if (i in array) {
+          this.cursor = i;
+          this.writeIndex = i;
+          result[i] = callback(array[i], i, array);
+        }
+      }
+    } finally {
+      this.stopWriting();
+    }
+    this.previous = caches;
+    this.previousKeys = keys;
+    this.previousByKey = null;
+    this.mapped = {
+      array,
+      callback,
+      selections,
+      result,
+      comparands,
+      itemsByComparand: new Array<null | Map<mixed, Array<number>>>(
+        selections.length,
+      ).fill(null),
+    };
+    return result;
+  }
+
+  mapChangedItems(
+    mapped: MappedList,
+    comparands: Array<Array<mixed>>,
+    selections: $ReadOnlyArray<mixed>,
+  ): Array<mixed> {
+    let changed: null | Set<number> = null;
+    for (let i = 0; i < selections.length; i++) {
+      const previousSelection = mapped.selections[i];
+      const selection = selections[i];
+      if (previousSelection === selection) {
+        continue;
+      }
+      let itemsByComparand = mapped.itemsByComparand[i];
+      if (itemsByComparand === null) {
+        itemsByComparand = mapped.itemsByComparand[i] = new Map();
+        const selectionComparands = comparands[i];
+        for (let j = 0; j < selectionComparands.length; j++) {
+          addComparand(itemsByComparand, selectionComparands[j], j);
+        }
+      }
+      // Map keys are compared with SameValueZero, which only differs from
+      // `===` for NaN: items that compared NaN are recomputed needlessly.
+      const previousItems = itemsByComparand.get(previousSelection);
+      const items = itemsByComparand.get(selection);
+      if (previousItems !== undefined || items !== undefined) {
+        if (changed === null) {
+          changed = new Set();
+        }
+        if (previousItems !== undefined) {
+          for (let j = 0; j < previousItems.length; j++) {
+            changed.add(previousItems[j]);
+          }
+        }
+        if (items !== undefined) {
+          for (let j = 0; j < items.length; j++) {
+            changed.add(items[j]);
+          }
+        }
+      }
+    }
+    if (changed === null) {
+      // No item compared a changed selection with its previous or new value,
+      // so every item is the same.
+      mapped.selections = selections;
+      return mapped.result;
+    }
+    const indices = Array.from(changed).sort((a, b) => a - b);
+    const array = mapped.array;
+    const callback = mapped.callback;
+    const values = new Array<mixed>(indices.length);
+    const caches = new Array<void | Array<mixed>>(indices.length);
+    const keys = new Array<mixed>(indices.length);
+    const itemComparands: Array<Array<mixed>> = this.startWriting(
+      caches,
+      keys,
+      selections.length,
+      indices.length,
+      true,
+    ) as any;
+    try {
+      for (let i = 0; i < indices.length; i++) {
+        const index = indices[i];
+        this.cursor = index;
+        this.writeIndex = i;
+        values[i] = callback(array[index], index, array);
+      }
+    } finally {
+      this.stopWriting();
+    }
+    // Every invocation completed; apply their results.
+    const result = mapped.result.slice();
+    for (let i = 0; i < indices.length; i++) {
+      const index = indices[i];
+      result[index] = values[i];
+      this.previous[index] = caches[i];
+      this.previousKeys[index] = keys[i];
+      for (let j = 0; j < selections.length; j++) {
+        const itemsByComparand = mapped.itemsByComparand[j];
+        const comparand = itemComparands[j][i];
+        if (itemsByComparand !== null) {
+          removeComparand(itemsByComparand, comparands[j][index], index);
+          addComparand(itemsByComparand, comparand, index);
+        }
+        comparands[j][index] = comparand;
+      }
+    }
+    this.previousByKey = null;
+    const changes: ListChanges = {base: mapped.result, indices};
+    (result as any)[REACT_LIST_CHANGES] = changes;
+    mapped.result = result;
+    mapped.selections = selections;
+    return result;
   }
 }
 

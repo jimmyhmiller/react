@@ -37,6 +37,7 @@ export const blockListItemNeedsFiber = shim;
 export const blockSlotNeedsCommit = shim;
 export const getBlockSlotInlineNode = shim;
 export const setBlockSlotContent = shim;
+export const getBlockListChanges = shim;
 export const getBlockSlotInlineItems = shim;
 export const getBlockInlineItemSlotItems = shim;
 export const getBlockInlineItemKey = shim;

@@ -310,6 +310,41 @@ pub fn compile_fn(
             context.timing.stop();
         }
 
+        // List item callbacks with selections are rewritten before
+        // AnalyseFunctions, so that their effects are inferred from the
+        // rewritten code (see memoize_list_items).
+        if env.config.enable_list_item_memoization
+            && context.react_runtime_module == "react/compiler-runtime"
+        {
+            context.timing.start("MemoizeListItemsWithSelections");
+            let runtime_module = context.react_runtime_module.clone();
+            let mut hook_binding = || {
+                let import = context.add_import_specifier(
+                    &runtime_module,
+                    "unstable_useListItemMemoCache",
+                    Some("useListItemMemoCache"),
+                );
+                react_compiler_hir::NonLocalBinding::ModuleLocal { name: import.name }
+            };
+            *memoized_lists = react_compiler_optimization::memoize_list_items_with_selections(
+                &mut hir,
+                &mut env,
+                &mut hook_binding,
+            );
+            context.timing.stop();
+
+            if context.debug_enabled {
+                context
+                    .timing
+                    .start("debug_print:MemoizeListItemsWithSelections");
+                let debug_memoize = debug_print::debug_hir(&hir, &env);
+                context.log_debug(DebugLogEntry::new(
+                    "MemoizeListItemsWithSelections",
+                    debug_memoize,
+                ));
+                context.timing.stop();
+            }
+        }
     }
 
     context.timing.start("AnalyseFunctions");
@@ -367,7 +402,7 @@ pub fn compile_fn(
                 );
                 react_compiler_hir::NonLocalBinding::ModuleLocal { name: import.name }
             };
-            *memoized_lists = react_compiler_optimization::memoize_list_items(
+            *memoized_lists += react_compiler_optimization::memoize_list_items(
                 &mut hir,
                 &mut env,
                 &mut hook_binding,

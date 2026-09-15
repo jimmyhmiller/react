@@ -24,7 +24,7 @@ pub use inline_components::{
 };
 pub use inline_iifes::inline_immediately_invoked_function_expressions;
 pub use jsx_blocks::compile_jsx_blocks;
-pub use memoize_list_items::memoize_list_items;
+pub use memoize_list_items::{memoize_list_items, memoize_list_items_with_selections};
 pub use name_anonymous_functions::name_anonymous_functions;
 pub use optimize_for_ssr::optimize_for_ssr;
 pub use optimize_props_method_calls::optimize_props_method_calls;

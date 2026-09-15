@@ -217,7 +217,7 @@ function commitBlockUpdateImpl(
     }
     if (hasFiber && (currentSlotFiber as any).memoizedProps.list === null) {
       // The slot now renders through its fiber; remove any inline content.
-      setBlockSlotContent(block, i, null, null, null);
+      setBlockSlotContent(block, i, null, null, null, null);
     } else {
       // Inline content, or a list whose items with fibers are the slot
       // fiber's children.
@@ -225,6 +225,7 @@ function commitBlockUpdateImpl(
         block,
         i,
         newValue,
+        oldValue,
         getBlockSlotInsertionPoint(finishedWork, i, true),
         hasFiber
           ? getBlockSlotFiberItems(

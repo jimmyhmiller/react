@@ -1,7 +1,8 @@
 // @enableJsxBlocks @enableComponentInlining @enableListItemMemoization
-// Each row of the list is memoized separately: the callback's body moves to a
-// module-level function whose memo cache is provided per item by
-// unstable_useListItemMemoCache.
+// Each row of the list is memoized separately, in a memo cache per item
+// provided by unstable_useListItemMemoCache. `selectedId` is only compared with
+// `===`, so it is a selection: the callback reads it through
+// `listItemCache.is` and the list is mapped by `listItemCache.map`.
 function Row({item, selected, onSelect}) {
   return (
     <tr className={selected ? 'danger' : ''}>

@@ -340,10 +340,72 @@ render reads; like with `enableNoCloningMemoCache`, a later render may start
 from the caches of such a render, which is safe because every output is stored
 with its inputs.
 
+### Selections
+
+Selecting one row of a list changes a value every item compares
+(`item.id === selectedId`), so every item's cache is checked even though two
+rows change. A value that a memoized callback captures and uses only as an
+operand of `===` or `!==` in its own body is a *selection*
+(`memoize_list_items.rs`):
+
+```js
+t1 = (item) => {
+  const selected = _listItemCache.is(0, item.id);   // was: item.id === selectedId
+  ...
+};
+t2 = _listItemCache.map(items, t1, [selectedId]);   // was: items.map(t1)
+```
+
+- `is(index, comparand)` returns exactly `selections[index] === comparand`
+  (`!==` becomes `!is(...)`) and records the comparand for the item being
+  computed.
+- The callback no longer captures the selections, so its own memoization no
+  longer depends on them: its identity stands for everything else it reads.
+- Recording comparands is only useful if the same array is mapped again, so
+  `map` records them only when it maps the same array as the previous time:
+  a render that changed the array maps every item without recording, the
+  first selection change after it maps every item and records, and later
+  selection changes use the recorded comparands. (Measured: recording on every
+  full map cost 1.5-4% on workloads that change the list on every render.)
+- When `map` receives the same array and callback as last time, only
+  selections changed. An item's result can only differ if it compared a changed
+  selection with a value equal to the old or new selection; every other item
+  would evaluate the same comparisons with the same results and (render being
+  pure) return the same element. `map` calls the callback only for those items,
+  and returns a copy of its previous result with them replaced. Map lookups use
+  SameValueZero, which can only add items (those that compared `NaN`), never
+  miss one. Duplicate comparands (a selected group) recompute every matching
+  item.
+- The copy records `{base, indices}` under `Symbol.for('react.list_changes')`.
+  React DOM uses it only if `base` is the list it committed and every replaced
+  item has the key and type of the item it replaces
+  (`getBlockListChanges`); otherwise the list is reconciled as usual. The
+  slot is then classified, checked for items that need fibers, and updated by
+  looking only at the replaced items. In development every other item is
+  checked to be identical, and a mismatch is reported as a React bug.
+- Non-arrays (anything else with a `map` method) and arrays whose `map` was
+  replaced are mapped as written; holes of sparse arrays are skipped like
+  `Array.prototype.map`. A render that throws or suspends while mapping leaves
+  the previous state unchanged.
+- Not selections: values read by nested functions (an event handler reads the
+  value of the render that created it), compared with `==`, compared with
+  another captured value, or used in any other way.
+
+The rewrite runs before AnalyseFunctions, so that the effects of the rewritten
+callback and of the `map` call are inferred from the rewritten code. (Before
+AnalyseFunctions the context of a nested function can list values it does not
+read, so reads in nested functions are found by scanning their bodies.) Other
+callbacks are memoized after AnalyseFunctions as before.
+
 Tests: `packages/react-reconciler/src/__tests__/useListItemMemoCache-test.js`
 (position and key reuse, separate lists, renders that skip the callback,
-StrictMode parity with `useMemoCache`, render attempts that suspend) and the
-fixtures under `experimental/list-item-memoization/`.
+StrictMode parity with `useMemoCache`, render attempts that suspend; for
+selections: which items are recomputed, recorded changes, `NaN`/`-0`/type
+semantics, duplicate and conditional comparisons, holes and non-arrays, a
+suspended partial recompute), the React DOM tests "updates only the replaced
+items of a list that records its changes" and "gives a fiber to a replaced
+item that needs one", and the fixtures under
+`experimental/list-item-memoization/`.
 
 ## Tests
 

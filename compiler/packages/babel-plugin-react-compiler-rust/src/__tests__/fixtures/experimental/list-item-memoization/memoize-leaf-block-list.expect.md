@@ -3,9 +3,10 @@
 
 ```javascript
 // @enableJsxBlocks @enableComponentInlining @enableListItemMemoization
-// Each row of the list is memoized separately: the callback's body moves to a
-// module-level function whose memo cache is provided per item by
-// unstable_useListItemMemoCache.
+// Each row of the list is memoized separately, in a memo cache per item
+// provided by unstable_useListItemMemoCache. `selectedId` is only compared with
+// `===`, so it is a selection: the callback reads it through
+// `listItemCache.is` and the list is mapped by `listItemCache.map`.
 function Row({item, selected, onSelect}) {
   return (
     <tr className={selected ? 'danger' : ''}>
@@ -64,9 +65,10 @@ const _BlockTemplate2 = _createBlockTemplate([
   null,
   [["tbody", null, null, [{ s: 0 }]]],
 ]); // @enableJsxBlocks @enableComponentInlining @enableListItemMemoization
-// Each row of the list is memoized separately: the callback's body moves to a
-// module-level function whose memo cache is provided per item by
-// unstable_useListItemMemoCache.
+// Each row of the list is memoized separately, in a memo cache per item
+// provided by unstable_useListItemMemoCache. `selectedId` is only compared with
+// `===`, so it is a selection: the callback reads it through
+// `listItemCache.is` and the list is mapped by `listItemCache.map`.
 function Row(t0) {
   const $ = _c(10);
   const { item, selected, onSelect } = t0;
@@ -104,80 +106,86 @@ function Row(t0) {
 }
 
 function Table(t0) {
-  const $ = _c(11);
+  const $ = _c(12);
   const _listItemCache = useListItemMemoCache();
   const { items, selectedId, onSelect } = t0;
   let t1;
-  if ($[0] !== items || $[1] !== onSelect || $[2] !== selectedId) {
-    let t2;
-    if ($[4] !== onSelect || $[5] !== selectedId) {
-      t2 = (item) => {
-        const t4 = item.id;
-        const item$0 = item;
-        const selected = item.id === selectedId;
-        const onSelect$0 = onSelect;
-        const t5 = selected ? "danger" : "";
-        const t6 = item$0.id;
-        const t7 = item$0.label;
-        const $0 = _listItemCache.next(7, t4);
-        let t8;
-        if (
-          $0[0] !== item$0 ||
-          $0[1] !== onSelect$0 ||
-          $0[2] !== t4 ||
-          $0[3] !== t5 ||
-          $0[4] !== t6 ||
-          $0[5] !== t7
-        ) {
-          t8 = (
-            <_BlockTemplate
-              key={t4}
-              v={[t5, t6, () => onSelect$0(item$0.id), t7]}
-            />
-          );
-          $0[0] = item$0;
-          $0[1] = onSelect$0;
-          $0[2] = t4;
-          $0[3] = t5;
-          $0[4] = t6;
-          $0[5] = t7;
-          $0[6] = t8;
-        } else {
-          t8 = $0[6];
-        }
-        return t8;
-      };
-      $[4] = onSelect;
-      $[5] = selectedId;
-      $[6] = t2;
-    } else {
-      t2 = $[6];
-    }
-    t1 = items.map(t2);
-    $[0] = items;
+  if ($[0] !== _listItemCache || $[1] !== onSelect) {
+    t1 = (item) => {
+      const t5 = item.id;
+      const item$0 = item;
+      const selected = _listItemCache.is(0, item.id);
+      const onSelect$0 = onSelect;
+      const t6 = selected ? "danger" : "";
+      const t7 = item$0.id;
+      const t8 = item$0.label;
+      const $0 = _listItemCache.next(7, t5);
+      let t9;
+      if (
+        $0[0] !== item$0 ||
+        $0[1] !== onSelect$0 ||
+        $0[2] !== t5 ||
+        $0[3] !== t6 ||
+        $0[4] !== t7 ||
+        $0[5] !== t8
+      ) {
+        t9 = (
+          <_BlockTemplate
+            key={t5}
+            v={[t6, t7, () => onSelect$0(item$0.id), t8]}
+          />
+        );
+        $0[0] = item$0;
+        $0[1] = onSelect$0;
+        $0[2] = t5;
+        $0[3] = t6;
+        $0[4] = t7;
+        $0[5] = t8;
+        $0[6] = t9;
+      } else {
+        t9 = $0[6];
+      }
+      return t9;
+    };
+    $[0] = _listItemCache;
     $[1] = onSelect;
-    $[2] = selectedId;
-    $[3] = t1;
+    $[2] = t1;
   } else {
-    t1 = $[3];
+    t1 = $[2];
   }
   let t2;
-  if ($[7] !== t1) {
-    t2 = [t1];
-    $[7] = t1;
-    $[8] = t2;
+  if (
+    $[3] !== _listItemCache ||
+    $[4] !== items ||
+    $[5] !== selectedId ||
+    $[6] !== t1
+  ) {
+    t2 = _listItemCache.map(items, t1, [selectedId]);
+    $[3] = _listItemCache;
+    $[4] = items;
+    $[5] = selectedId;
+    $[6] = t1;
+    $[7] = t2;
   } else {
-    t2 = $[8];
+    t2 = $[7];
   }
   let t3;
-  if ($[9] !== t2) {
-    t3 = <_BlockTemplate2 v={t2} />;
-    $[9] = t2;
-    $[10] = t3;
+  if ($[8] !== t2) {
+    t3 = [t2];
+    $[8] = t2;
+    $[9] = t3;
   } else {
-    t3 = $[10];
+    t3 = $[9];
   }
-  return t3;
+  let t4;
+  if ($[10] !== t3) {
+    t4 = <_BlockTemplate2 v={t3} />;
+    $[10] = t3;
+    $[11] = t4;
+  } else {
+    t4 = $[11];
+  }
+  return t4;
 }
 
 ```

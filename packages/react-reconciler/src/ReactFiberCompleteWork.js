@@ -395,6 +395,7 @@ function appendAllChildrenToBlock(
       block,
       i,
       getBlockSlotValue(template, values, i),
+      null,
       getBlockSlotNextStaticSibling(block, i),
       null,
     );
@@ -410,6 +411,7 @@ function appendAllChildrenToBlock(
         block,
         slot.index,
         list,
+        null,
         before as any,
         getBlockSlotFiberItems(slot, list.length),
       );

@@ -53,7 +53,7 @@
 
 import type {Fiber} from 'react-reconciler/src/ReactInternalTypes';
 
-import {REACT_ELEMENT_TYPE} from 'shared/ReactSymbols';
+import {REACT_ELEMENT_TYPE, REACT_LIST_CHANGES} from 'shared/ReactSymbols';
 import isArray from 'shared/isArray';
 
 import {
@@ -459,6 +459,64 @@ function isBlockList(children: $ReadOnlyArray<mixed>): boolean {
   return true;
 }
 
+// If `list` was produced from `previousList` by the `map` of
+// unstable_useListItemMemoCache (react/compiler-runtime), which records the
+// items it replaced (REACT_LIST_CHANGES), returns the ascending indices of
+// those items; every other item is the same element as in `previousList`.
+// Returns null otherwise, and when a replaced item does not have the key and
+// type of the item it replaces, so that callers only need to look at the
+// replaced items to know that `list` is a list of keyed blocks if
+// `previousList` was one (with the same keys, in the same order).
+export function getBlockListChanges(
+  list: mixed,
+  previousList: mixed,
+): null | $ReadOnlyArray<number> {
+  if (!isArray(list) || !isArray(previousList)) {
+    return null;
+  }
+  const changes: mixed = (list as any)[REACT_LIST_CHANGES];
+  if (
+    changes == null ||
+    (changes as any).base !== previousList ||
+    list.length !== previousList.length
+  ) {
+    return null;
+  }
+  const indices: $ReadOnlyArray<number> = (changes as any).indices;
+  for (let i = 0; i < indices.length; i++) {
+    const child: any = list[indices[i]];
+    const previous: any = previousList[indices[i]];
+    if (
+      typeof child !== 'object' ||
+      child === null ||
+      child.$$typeof !== REACT_ELEMENT_TYPE ||
+      typeof previous !== 'object' ||
+      previous === null ||
+      child.key !== previous.key ||
+      child.type !== previous.type
+    ) {
+      return null;
+    }
+  }
+  if (__DEV__) {
+    let next = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (next < indices.length && indices[next] === i) {
+        next++;
+      } else if (list[i] !== previousList[i]) {
+        console.error(
+          'React Compiler list changes are inconsistent: item %s differs ' +
+            'from the previous list but is not recorded as changed. This is ' +
+            'a bug in React.',
+          i,
+        );
+        return null;
+      }
+    }
+  }
+  return indices;
+}
+
 // Whether an item of a list (a keyed block element) needs a fiber: one of its
 // slots needs a fiber, or holds a list with an item that does.
 // `previousInlineItem` is the element at the same index of a value of the same
@@ -571,10 +629,13 @@ function getSlotFirstNode(
 // `fiberItems[i]` is the host instance of the fiber of item i, or null for an
 // item without a fiber. New nodes are inserted before `before`, which must
 // follow the slot's content.
+// `previousValue` is the value the slot's current content was rendered from
+// (null if it has none).
 export function setBlockSlotContent(
   root: Element,
   slotIndex: number,
   value: mixed,
+  previousValue: mixed,
   before: null | Node,
   fiberItems: null | $ReadOnlyArray<null | Element>,
 ): void {
@@ -582,6 +643,7 @@ export function setBlockSlotContent(
     getBlockInstanceData(root),
     slotIndex,
     value,
+    previousValue,
     before,
     fiberItems,
   );
@@ -591,6 +653,7 @@ function setSlotContent(
   data: BlockInstanceData,
   slotIndex: number,
   value: mixed,
+  previousValue: mixed,
   before: null | Node,
   fiberItems: null | $ReadOnlyArray<null | Element> = null,
 ): void {
@@ -611,6 +674,7 @@ function setSlotContent(
         parent,
         existing,
         value,
+        previousValue,
         before,
         slot.soleChild,
         fiberItems,
@@ -1026,6 +1090,7 @@ function createInlineItem(
           data,
           i,
           value,
+          null,
           slot.nextStaticRef === -1 ? null : data.refs[slot.nextStaticRef],
         );
       }
@@ -1051,6 +1116,7 @@ function updateInlineItem(data: BlockInstanceData, newValues: BlockValues) {
           data,
           i,
           newValues[hole],
+          oldValues[hole],
           getInlineSlotInsertionPoint(data, i),
         );
       }
@@ -1115,12 +1181,37 @@ function reconcileList(
   parent: Element,
   oldItems: Array<BlockInstanceData>,
   children: $ReadOnlyArray<BlockElement>,
+  // The list `oldItems` were rendered from.
+  previousChildren: mixed,
   before: null | Node,
   soleChild: boolean,
   fiberItems: null | $ReadOnlyArray<null | Element>,
 ): Array<BlockInstanceData> {
   const oldLength = oldItems.length;
   const newLength = children.length;
+  if (fiberItems === null && oldLength === newLength) {
+    // A list that records which of its items replace items of the list the
+    // current items were rendered from only needs those items updated: every
+    // other item is the same element, so it is unchanged.
+    const changed = getBlockListChanges(children, previousChildren);
+    if (changed !== null) {
+      let matches = true;
+      for (let i = 0; i < changed.length; i++) {
+        const index = changed[i];
+        if (!isSameItem(oldItems[index], children[index], index, null)) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        for (let i = 0; i < changed.length; i++) {
+          const index = changed[i];
+          updateItem(oldItems[index], children[index]);
+        }
+        return oldItems;
+      }
+    }
+  }
   if (newLength === 0) {
     if (oldLength > 0) {
       if (soleChild && !oldItems.some(item => item.ownedByFiber)) {

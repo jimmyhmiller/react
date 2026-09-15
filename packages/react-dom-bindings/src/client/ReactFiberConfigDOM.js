@@ -7054,6 +7054,7 @@ export {
   blockSlotNeedsCommit,
   getBlockSlotInlineNode,
   setBlockSlotContent,
+  getBlockListChanges,
   getBlockSlotInlineItems,
   getBlockInlineItemSlotItems,
   getBlockInlineItemKey,

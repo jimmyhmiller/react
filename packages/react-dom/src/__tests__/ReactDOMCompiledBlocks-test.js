@@ -14,6 +14,7 @@ let ReactDOM;
 let ReactDOMClient;
 let act;
 let assertLog;
+let assertConsoleErrorDev;
 let Scheduler;
 
 // Most tests render the same UI twice: once as ordinary host elements and once
@@ -30,7 +31,7 @@ describe('ReactDOMCompiledBlocks', () => {
     ReactDOM = require('react-dom');
     ReactDOMClient = require('react-dom/client');
     Scheduler = require('scheduler');
-    ({act, assertLog} = require('internal-test-utils'));
+    ({act, assertLog, assertConsoleErrorDev} = require('internal-test-utils'));
 
     document.body.innerHTML = '';
     blockContainer = document.createElement('div');
@@ -1655,6 +1656,193 @@ describe('ReactDOMCompiledBlocks', () => {
         expect(slotErrors).toEqual([]);
         expect(hostErrors).toEqual([]);
       }
+    });
+
+    // @gate enableCompiledBlocks
+    it('updates only the replaced items of a list that records its changes', async () => {
+      // unstable_useListItemMemoCache's `map` returns a copy of its previous
+      // result with some items replaced, and records them.
+      const LIST_CHANGES = Symbol.for('react.list_changes');
+      function replaceItems(base, replacements) {
+        const list = base.slice();
+        const indices = [];
+        for (let i = 0; i < replacements.length; i++) {
+          const [index, item] = replacements[i];
+          list[index] = item;
+          indices.push(index);
+        }
+        list[LIST_CHANGES] = {base, indices};
+        return list;
+      }
+      // Counts the items a renderer reads.
+      let itemReads = 0;
+      function countingItemReads(list) {
+        return new Proxy(list, {
+          get(target, property, receiver) {
+            if (typeof property === 'string' && /^\d+$/.test(property)) {
+              itemReads++;
+            }
+            return Reflect.get(target, property, receiver);
+          },
+        });
+      }
+
+      const rowTemplate = createRowTemplate();
+      const otherRowTemplate = ReactDOM.unstable_createBlockTemplate([
+        'tr',
+        null,
+        [['className', 0]],
+        [
+          ['td', {className: 'id'}, null, [{s: 1}]],
+          ['td', null, null, [['a', null, [['onClick', 2]], [{s: 3}]]]],
+        ],
+      ]);
+      const tableTemplate = createTableTemplate();
+      const rows = [];
+      for (let i = 1; i <= 200; i++) {
+        rows.push({id: i, label: 'row ' + i});
+      }
+      const nodes = () => Array.from(blockContainer.querySelectorAll('tr'));
+
+      const first = rows.map(row => rowBlock(rowTemplate, row, 3));
+      await renderBoth(
+        block(tableTemplate, [first]),
+        <TableJsx rows={rows} selected={3} />,
+      );
+      const initialNodes = nodes();
+
+      // Selecting row 150 replaces rows 3 and 150.
+      const second = countingItemReads(
+        replaceItems(first, [
+          [2, rowBlock(rowTemplate, rows[2], 150)],
+          [149, rowBlock(rowTemplate, rows[149], 150)],
+        ]),
+      );
+      itemReads = 0;
+      await renderBoth(
+        block(tableTemplate, [second]),
+        <TableJsx rows={rows} selected={150} />,
+      );
+      if (!__DEV__) {
+        // A few reads of each replaced item, instead of reads of all 200
+        // items. (Development checks every item against the recorded
+        // changes.)
+        expect(itemReads).toBeLessThan(50);
+      }
+      expect(nodes()).toEqual(initialNodes);
+      expect(countFibers(blockContainer)).toBe(1);
+
+      // Changes recorded against a list that is not the committed one are
+      // ignored.
+      const unrelated = replaceItems(
+        rows.map(row => rowBlock(rowTemplate, row, 1)),
+        [[0, rowBlock(rowTemplate, rows[0], 1)]],
+      );
+      await renderBoth(
+        block(tableTemplate, [unrelated]),
+        <TableJsx rows={rows} selected={1} />,
+      );
+      expect(nodes()).toEqual(initialNodes);
+
+      // A replaced item with another template is not the same item: the list
+      // is reconciled, and only that row is recreated.
+      const third = replaceItems(unrelated, [
+        [0, rowBlock(otherRowTemplate, rows[0], 6)],
+        [5, rowBlock(rowTemplate, rows[5], 6)],
+      ]);
+      await renderBoth(
+        block(tableTemplate, [third]),
+        <TableJsx rows={rows} selected={6} />,
+      );
+      const thirdNodes = nodes();
+      expect(thirdNodes[0]).not.toBe(initialNodes[0]);
+      expect(thirdNodes.slice(1)).toEqual(initialNodes.slice(1));
+
+      if (__DEV__) {
+        // An item that differs without being recorded is a bug in the
+        // producer of the changes: the list is reconciled as a whole.
+        const inconsistent = replaceItems(third, [
+          [5, rowBlock(rowTemplate, rows[5], 7)],
+        ]);
+        inconsistent[6] = rowBlock(rowTemplate, rows[6], 7);
+        await renderBoth(
+          block(tableTemplate, [inconsistent]),
+          <TableJsx rows={rows} selected={7} />,
+        );
+        // Reported when the block renders and when its list is committed.
+        const message =
+          'React Compiler list changes are inconsistent: item 6 differs from ' +
+          'the previous list but is not recorded as changed. This is a bug ' +
+          'in React.';
+        assertConsoleErrorDev([message, message]);
+      }
+    });
+
+    // @gate enableCompiledBlocks
+    it('gives a fiber to a replaced item that needs one', async () => {
+      const LIST_CHANGES = Symbol.for('react.list_changes');
+      // <li data-key={0}><b>{1}</b></li>
+      const itemTemplate = ReactDOM.unstable_createBlockTemplate([
+        'li',
+        null,
+        [['data-key', 0]],
+        [['b', null, null, [{s: 1}]]],
+      ]);
+      const listTemplate = ReactDOM.unstable_createBlockTemplate([
+        'ul',
+        null,
+        null,
+        [{s: 0}],
+      ]);
+      function Editor({id}) {
+        React.useEffect(() => {
+          Scheduler.log('mount ' + id);
+          return () => Scheduler.log('unmount ' + id);
+        }, [id]);
+        return <em>{'editing ' + id}</em>;
+      }
+      function item(id, editing, asBlock) {
+        const content = editing ? <Editor id={id} /> : 'item ' + id;
+        return asBlock ? (
+          block(itemTemplate, [String(id), content], String(id))
+        ) : (
+          <li key={id} data-key={String(id)}>
+            <b>{content}</b>
+          </li>
+        );
+      }
+      const ids = [1, 2, 3, 4, 5];
+      const first = ids.map(id => item(id, false, true));
+      await renderBoth(
+        block(listTemplate, [first]),
+        <ul>{ids.map(id => item(id, false, false))}</ul>,
+      );
+      const initialNodes = Array.from(blockContainer.querySelectorAll('li'));
+
+      const second = first.slice();
+      second[3] = item(4, true, true);
+      second[LIST_CHANGES] = {base: first, indices: [3]};
+      await renderBoth(
+        block(listTemplate, [second]),
+        <ul>{ids.map(id => item(id, id === 4, false))}</ul>,
+      );
+      assertLog(['mount 4', 'mount 4']);
+      expect(Array.from(blockContainer.querySelectorAll('li'))).toEqual(
+        initialNodes,
+      );
+
+      const third = second.slice();
+      third[1] = item(2, true, true);
+      third[3] = item(4, false, true);
+      third[LIST_CHANGES] = {base: second, indices: [1, 3]};
+      await renderBoth(
+        block(listTemplate, [third]),
+        <ul>{ids.map(id => item(id, id === 2, false))}</ul>,
+      );
+      assertLog(['unmount 4', 'mount 2', 'unmount 4', 'mount 2']);
+      expect(Array.from(blockContainer.querySelectorAll('li'))).toEqual(
+        initialNodes,
+      );
     });
   });
 
