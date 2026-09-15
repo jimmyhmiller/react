@@ -7,7 +7,7 @@
 
 // Runs every workload against every built variant in headless Chromium.
 //
-//   node scripts/bench.mjs [--iterations N] [--warmup N] [--workload NAME]...
+//   node scripts/bench.mjs [--iterations N] [--warmup N] [--workload NAME]... [--app NAME]...
 //                          [--variant NAME]... [--chromium PATH]
 //
 // `--variant` limits the run to the named variants plus their baselines.
@@ -20,7 +20,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {chromium} from 'playwright';
-import {VARIANTS, baselineFor} from './variants.mjs';
+import {APPS} from './apps.mjs';
+import {VARIANTS, baselineFor, variantHasApp} from './variants.mjs';
 import {APP_PAGES, PAGE_HELPERS, WORKLOADS} from './workloads.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,6 +31,7 @@ function parseArgs(argv) {
     iterations: 10,
     warmup: 2,
     workloads: [],
+    apps: [],
     variants: [],
     chromium: null,
   };
@@ -51,6 +53,10 @@ function parseArgs(argv) {
         break;
       case '--variant':
         args.variants.push(value);
+        i++;
+        break;
+      case '--app':
+        args.apps.push(value);
         i++;
         break;
       case '--chromium':
@@ -119,7 +125,7 @@ function summarize(samples) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dist', 'manifest.json'), 'utf8'));
-  const workloads =
+  let workloads =
     args.workloads.length === 0
       ? WORKLOADS
       : args.workloads.map(name => {
@@ -129,6 +135,14 @@ async function main() {
           }
           return workload;
         });
+  if (args.apps.length !== 0) {
+    for (const name of args.apps) {
+      if (!APPS.some(app => app.name === name)) {
+        throw new Error(`Unknown app: ${name}`);
+      }
+    }
+    workloads = workloads.filter(workload => args.apps.includes(workload.app));
+  }
 
   let variants = VARIANTS;
   if (args.variants.length !== 0) {
@@ -155,6 +169,9 @@ async function main() {
       for (let i = 0; i < args.warmup + args.iterations; i++) {
         const measured = i >= args.warmup;
         for (const variant of variants) {
+          if (!variantHasApp(variant, APPS.find(app => app.name === workload.app))) {
+            continue;
+          }
           const steps = await runSample(browser, variant, workload);
           if (!measured) {
             continue;
@@ -176,6 +193,9 @@ async function main() {
   const summary = [];
   for (const [key, byVariant] of Object.entries(samples)) {
     for (const variant of variants) {
+      if (byVariant[variant.name] == null) {
+        continue;
+      }
       const stats = summarize(byVariant[variant.name]);
       const baselineName = baselineFor(variant);
       summary.push({
@@ -225,7 +245,7 @@ async function main() {
   for (const step of steps) {
     const cells = variants.map(v => {
       const row = summary.find(r => r.step === step && r.variant === v.name);
-      return row.median.toFixed(1).padStart(width);
+      return (row == null ? '-' : row.median.toFixed(1)).padStart(width);
     });
     console.log(step.padEnd(40) + cells.join(''));
   }

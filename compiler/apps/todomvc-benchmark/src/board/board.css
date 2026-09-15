@@ -1,0 +1,26 @@
+/**
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+body { margin: 0; font: 13px/1.4 system-ui, sans-serif; }
+.board-app { display: flex; flex-direction: column; min-height: 100vh; }
+.theme-dark { background: #1b1d22; color: #e6e6e6; }
+.app-header, .toolbar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; }
+.app-header h1 { font-size: 16px; margin: 0; }
+.presence { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.avatar { width: 22px; height: 22px; border-radius: 50%; background: #cde; text-align: center; font-size: 10px; line-height: 22px; }
+.board { display: grid; grid-template-columns: repeat(10, 220px); gap: 8px; padding: 8px 12px; overflow-x: auto; }
+.column h2 { font-size: 13px; margin: 0 0 6px; }
+.cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.card { border: 1px solid #ddd; border-radius: 6px; padding: 6px; display: grid; grid-template-columns: 1fr auto auto; gap: 4px; }
+.card.selected { outline: 2px solid #4a7dff; }
+.card.mine { background: rgba(74, 125, 255, 0.08); }
+.card-title { grid-column: 1 / -1; text-align: left; background: none; border: 0; padding: 0; font: inherit; color: inherit; }
+.card-meta { display: flex; gap: 4px; align-items: center; }
+.label { font-size: 10px; padding: 0 4px; border-radius: 3px; background: #eee; color: #333; }
+.star, .move { border: 0; background: none; cursor: pointer; }
+.details { position: fixed; right: 12px; top: 60px; width: 260px; padding: 12px; background: #fff; border: 1px solid #ccc; color: #111; }
+.title-input { width: 100%; box-sizing: border-box; }

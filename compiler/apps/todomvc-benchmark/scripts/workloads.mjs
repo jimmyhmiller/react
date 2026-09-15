@@ -73,6 +73,9 @@ window.__bench = {
 export const APP_PAGES = {
   todomvc: {ready: '.new-todo', root: '.todoapp'},
   rows: {ready: '#run', root: '.container'},
+  'board-context': {ready: '.card', root: '.board-app'},
+  'board-zustand': {ready: '.card', root: '.board-app'},
+  'board-redux': {ready: '.card', root: '.board-app'},
 };
 
 export const WORKLOADS = [
@@ -304,4 +307,125 @@ export const WORKLOADS = [
       },
     ],
   },
+  // The project board (src/board/), once per state library. Every step
+  // starts from the initial board of 1,000 cards in 10 columns.
+  ...['board-context', 'board-zustand', 'board-redux'].flatMap(app => [
+    {
+      app,
+      name: `${app}/select-card`,
+      description: 'select 20 different cards',
+      setup: '',
+      steps: [
+        {
+          name: 'select-x20',
+          run: `const titles = document.querySelectorAll('.card-title'); for (let i = 0; i < 20; i++) { await __bench.click(titles[(i * 47) % titles.length]); }`,
+          verify: `__bench.assert(__bench.count('.card.selected') === 1 && __bench.count('.details') === 1, 'expected one selected card');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/notifications`,
+      description: 'receive 50 notifications (no card displays them)',
+      setup: '',
+      steps: [
+        {
+          name: 'notifications-x50',
+          run: `const button = document.getElementById('tick-notifications'); for (let i = 0; i < 50; i++) { await __bench.click(button); }`,
+          verify: `__bench.assert(document.querySelector('.bell .count').textContent === '50', 'expected 50 notifications');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/presence`,
+      description: 'receive 50 presence updates',
+      setup: '',
+      steps: [
+        {
+          name: 'presence-x50',
+          run: `const button = document.getElementById('tick-presence'); for (let i = 0; i < 50; i++) { await __bench.click(button); }`,
+          verify: `__bench.assert(__bench.count('.presence .avatar') > 0, 'expected avatars');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/toggle-theme`,
+      description: 'toggle the theme 10 times (every card reads it)',
+      setup: '',
+      steps: [
+        {
+          name: 'theme-x10',
+          run: `const button = document.querySelector('.theme-toggle'); for (let i = 0; i < 10; i++) { await __bench.click(button); }`,
+          verify: `__bench.assert(__bench.count('.theme-light') === 1, 'expected the light theme');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/filter`,
+      description: 'type a 6-character filter, then delete it character by character',
+      setup: '',
+      steps: [
+        {
+          name: 'filter-type-delete',
+          run: `const input = document.querySelector('.search'); const text = 'review'; for (let i = 1; i <= text.length; i++) { await __bench.setInputValue(input, text.slice(0, i)); } for (let i = text.length - 1; i >= 0; i--) { await __bench.setInputValue(input, text.slice(0, i)); }`,
+          verify: `__bench.assert(__bench.count('.card') === 1000, 'expected every card');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/star`,
+      description: 'star 20 cards',
+      setup: '',
+      steps: [
+        {
+          name: 'star-x20',
+          run: `const stars = document.querySelectorAll('.star'); for (let i = 0; i < 20; i++) { await __bench.click(stars[(i * 53) % stars.length]); }`,
+          verify: `__bench.assert(__bench.count('.star.starred') === 20, 'expected 20 starred cards');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/move-card`,
+      description: 'move 20 cards to the next column',
+      setup: '',
+      steps: [
+        {
+          name: 'move-x20',
+          run: `for (let i = 0; i < 20; i++) { const moves = document.querySelectorAll('.move'); await __bench.click(moves[(i * 61) % moves.length]); }`,
+          verify: `__bench.assert(__bench.count('.card') === 1000, 'expected every card');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/rename`,
+      description: 'select a card and type 30 characters into its title',
+      setup: `await __bench.click(document.querySelectorAll('.card-title')[500]);`,
+      steps: [
+        {
+          name: 'rename-typing-x30',
+          run: `const input = document.querySelector('.title-input'); let text = input.value; for (let i = 0; i < 30; i++) { text += 'x'; await __bench.setInputValue(input, text); }`,
+          verify: `__bench.assert(document.querySelectorAll('.card-title')[500].textContent.endsWith('x'.repeat(30)), 'expected the renamed card');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/only-mine`,
+      description: 'toggle "only mine" 10 times',
+      setup: '',
+      steps: [
+        {
+          name: 'only-mine-x10',
+          run: `const button = document.querySelector('.only-mine'); for (let i = 0; i < 10; i++) { await __bench.click(button); }`,
+          verify: `__bench.assert(__bench.count('.card') === 1000, 'expected every card');`,
+        },
+      ],
+    },
+  ]),
 ];

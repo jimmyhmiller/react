@@ -30,8 +30,9 @@
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {chromium} from 'playwright';
-import {VARIANTS} from './variants.mjs';
+import {VARIANTS, variantHasApp} from './variants.mjs';
 import {APP_PAGES, PAGE_HELPERS, WORKLOADS} from './workloads.mjs';
+import {APPS} from './apps.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REFERENCE = 'no-compiler';
@@ -175,7 +176,8 @@ async function main() {
       for (const variant of VARIANTS) {
         if (
           variant.name === REFERENCE ||
-          (args.variants.length !== 0 && !args.variants.includes(variant.name))
+          (args.variants.length !== 0 && !args.variants.includes(variant.name)) ||
+          !variantHasApp(variant, APPS.find(app => app.name === workload.app))
         ) {
           continue;
         }

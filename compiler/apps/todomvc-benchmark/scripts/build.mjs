@@ -19,7 +19,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {VARIANTS} from './variants.mjs';
+import {APPS} from './apps.mjs';
+import {VARIANTS, variantHasApp} from './variants.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,31 +36,6 @@ const rustPluginPath = path.join(
   COMPILER_ROOT,
   'packages/babel-plugin-react-compiler-rust/dist/index.js',
 );
-
-export const APPS = [
-  {
-    name: 'todomvc',
-    source: 'TodoApp.jsx',
-    entry: 'todomvc-main.jsx',
-    frameworkEntries: {
-      solid: 'solid/todomvc-main.jsx',
-      svelte: 'svelte/todomvc-main.js',
-      vue: 'vue/todomvc-main.js',
-    },
-    css: path.join(ROOT, 'node_modules/todomvc-app-css/index.css'),
-  },
-  {
-    name: 'rows',
-    source: 'RowsApp.jsx',
-    entry: 'rows-main.jsx',
-    frameworkEntries: {
-      solid: 'solid/rows-main.jsx',
-      svelte: 'svelte/rows-main.js',
-      vue: 'vue/rows-main.js',
-    },
-    css: path.join(ROOT, 'src/rows.css'),
-  },
-];
 
 function compileApp(variant, app) {
   const filename = path.join(ROOT, 'src', app.source);
@@ -255,7 +231,7 @@ function frameworkBuildOptions(variant) {
 }
 
 function writePage(outDir, app, variant) {
-  fs.copyFileSync(app.css, path.join(outDir, 'index.css'));
+  fs.copyFileSync(path.join(ROOT, app.css), path.join(outDir, 'index.css'));
   fs.writeFileSync(
     path.join(outDir, 'index.html'),
     `<!doctype html>
@@ -328,6 +304,9 @@ async function build() {
   const manifest = [];
   for (const variant of VARIANTS) {
     for (const app of APPS) {
+      if (!variantHasApp(variant, app)) {
+        continue;
+      }
       const outDir = path.join(dist, variant.name, app.name);
       fs.mkdirSync(outDir, {recursive: true});
       const entry = {variant: variant.name, framework: variant.framework, app: app.name};

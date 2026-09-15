@@ -84,6 +84,15 @@ export const VARIANTS = [
   {name: 'vue', framework: 'vue'},
 ];
 
+// Apps without an implementation for a framework (see apps.mjs) are
+// not built or measured for it.
+export function variantHasApp(variant, app) {
+  if (variant.framework === 'react' || variant.framework === 'preact') {
+    return true;
+  }
+  return app.frameworkEntries?.[variant.framework] != null;
+}
+
 // The variant each variant's speedup is reported against: the React Compiler
 // on the same React build, and for other frameworks the React Compiler on
 // this repository's build (the build that compiled blocks use).
