@@ -297,10 +297,81 @@ async function buildReactVariant(variant, app, outDir) {
       logLevel: 'error',
     });
     fs.copyFileSync(compiledPath, path.join(outDir, path.basename(compiledPath)));
+    if (variant.framework === 'react') {
+      await buildServerRenderedPage(variant, app, outDir, compiledPath, {
+        alias: options.alias,
+        plugins: [compiledModules, ...options.plugins],
+        define: options.define,
+      });
+    }
   } finally {
     fs.rmSync(compiledPath);
   }
   return {code, compiledFunctions};
+}
+
+// The root of a server-rendered page, on the server and the client: marks the
+// document once the app is hydrated (effects run after hydration commits), so
+// that verify.mjs and bench.mjs wait for hydration.
+const SSR_ROOT = `import {useEffect} from 'react';
+function Root() {
+  useEffect(() => { document.body.setAttribute('data-hydrated', ''); }, []);
+  return <App />;
+}`;
+
+// Builds dist/<variant>/<app>/ssr/: the app rendered to HTML with the
+// variant's React server renderer, and a bundle that hydrates it (see
+// verify.mjs --ssr).
+async function buildServerRenderedPage(variant, app, outDir, compiledPath, options) {
+  const ssrDir = path.join(outDir, 'ssr');
+  fs.mkdirSync(ssrDir, {recursive: true});
+  const appImport = './' + path.basename(compiledPath);
+  const shared = {
+    bundle: true,
+    jsx: 'automatic',
+    define: {'process.env.NODE_ENV': '"production"', ...options.define},
+    nodePaths: [path.join(ROOT, 'node_modules')],
+    alias: options.alias,
+    plugins: options.plugins,
+    logLevel: 'error',
+  };
+  const serverFile = path.join(ssrDir, 'server.cjs');
+  await esbuild.build({
+    ...shared,
+    stdin: {
+      contents: `import {renderToString} from 'react-dom/server';\nimport App from '${appImport}';\n${SSR_ROOT}\nexport function render() { return renderToString(<Root />); }\n`,
+      resolveDir: path.dirname(compiledPath),
+      sourcefile: 'ssr-entry.jsx',
+      loader: 'jsx',
+    },
+    platform: 'node',
+    format: 'cjs',
+    outfile: serverFile,
+  });
+  delete require.cache[serverFile];
+  const html = require(serverFile).render();
+  await esbuild.build({
+    ...shared,
+    stdin: {
+      contents: `import {hydrateRoot} from 'react-dom/client';\nimport App from '${appImport}';\n${SSR_ROOT}\nhydrateRoot(document.getElementById('root'), <Root />, {onRecoverableError(error) { console.error('Recoverable error: ' + error.message); }});\n`,
+      resolveDir: path.dirname(compiledPath),
+      sourcefile: 'hydrate-entry.jsx',
+      loader: 'jsx',
+    },
+    minify: MINIFY,
+    format: 'iife',
+    outfile: path.join(ssrDir, 'bundle.js'),
+  });
+  fs.copyFileSync(path.join(ROOT, app.css), path.join(ssrDir, 'index.css'));
+  fs.writeFileSync(
+    path.join(ssrDir, 'index.html'),
+    `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>${app.name}: ${variant.name} (server rendered)</title><link rel="stylesheet" href="index.css"></head>
+<body><div id="root">${html}</div><script src="bundle.js"></script></body>
+</html>
+`,
+  );
 }
 
 async function buildFrameworkVariant(variant, app, outDir) {

@@ -187,6 +187,7 @@ import {
   getBlockSlotCount,
   getBlockSlotValue,
   getBlockSlotValueKind,
+  isHydratedBlockSlotInline,
   BlockSlotInline,
   BlockSlotList,
   BlockSlotFiber,
@@ -261,6 +262,8 @@ import {
   claimHydratableSingleton,
   tryToClaimNextHydratableInstance,
   tryToClaimNextHydratableTextInstance,
+  tryToClaimNextHydratableBlockInstance,
+  enterHydrationStateOfBlockSlot,
   claimNextHydratableActivityInstance,
   claimNextHydratableSuspenseInstance,
   warnIfHydrating,
@@ -1982,8 +1985,12 @@ function mountHostRootWithoutHydrating(
 }
 
 function updateHostBlock(current: Fiber | null, workInProgress: Fiber) {
-  if (getIsHydrating()) {
-    throw new Error('Compiled blocks do not support hydration yet.');
+  // A new block in a hydrating tree claims its server-rendered DOM. Every slot
+  // that does not hold text or nothing is then rendered by a slot fiber, which
+  // hydrates its content (lists included; see "Hydration" in ReactDOMBlocks).
+  const hydrating = current === null && getIsHydrating();
+  if (hydrating) {
+    tryToClaimNextHydratableBlockInstance(workInProgress);
   }
   // A block's children are HostBlockSlot fibers, in template order, for the
   // slots whose value needs fibers. A slot fiber's index is its slot index in
@@ -2021,6 +2028,24 @@ function updateHostBlock(current: Fiber | null, workInProgress: Fiber) {
   let previousSlot: Fiber | null = null;
   for (let i = 0; i < slotCount; i++) {
     const children = getBlockSlotValue(template, values, i);
+    if (hydrating) {
+      if (isHydratedBlockSlotInline(children)) {
+        continue;
+      }
+      const slot = createFiberFromBlockSlot(
+        {children, list: null, adopt: false},
+        workInProgress.mode,
+      );
+      slot.return = workInProgress;
+      slot.index = i;
+      if (previousSlot === null) {
+        workInProgress.child = slot;
+      } else {
+        previousSlot.sibling = slot;
+      }
+      previousSlot = slot;
+      continue;
+    }
     const matchingCurrent =
       currentSlot !== null && currentSlot.index === i ? currentSlot : null;
     if (matchingCurrent !== null) {
@@ -2194,6 +2219,12 @@ function updateHostBlockSlot(
 ) {
   const {children: nextChildren, adopt} = workInProgress.pendingProps;
   const block: Fiber = workInProgress.return as any;
+  if (current === null && getIsHydrating()) {
+    // The slot's content is hydrated in place.
+    enterHydrationStateOfBlockSlot(workInProgress);
+    reconcileChildren(null, workInProgress, nextChildren, renderLanes);
+    return workInProgress.child;
+  }
   // A block with a host instance during its render is mounted, or adopted an
   // inline item's instance.
   const blockMounted = block.alternate !== null || block.stateNode !== null;

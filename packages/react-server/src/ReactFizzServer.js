@@ -40,6 +40,11 @@ import type {
 import type {ContextSnapshot} from './ReactFizzNewContext';
 import type {ComponentStackNode} from './ReactFizzComponentStack';
 import type {TreeContext} from './ReactFizzTreeContext';
+import type {
+  BlockTemplate,
+  BlockNodeDescription,
+  BlockChildDescription,
+} from 'react-dom-bindings/src/shared/ReactDOMBlockTemplate';
 import type {ThenableState} from './ReactFizzThenable';
 
 import {describeObjectForErrorMessage} from 'shared/ReactSerializationErrors';
@@ -101,6 +106,7 @@ import {
   hoistPreambleState,
   isPreambleReady,
   isPreambleContext,
+  canRenderBlockTemplate,
   hasSuspenseyContent,
 } from './ReactFizzConfig';
 import {
@@ -190,6 +196,7 @@ import {
   enableFizzBlockingRender,
   enableAsyncDebugInfo,
   enableCPUSuspense,
+  enableCompiledBlocks,
 } from 'shared/ReactFeatureFlags';
 
 import assign from 'shared/assign';
@@ -3062,6 +3069,120 @@ function renderViewTransition(
   task.keyPath = prevKeyPath;
 }
 
+// A compiled block (see react-dom-bindings/src/client/ReactDOMBlocks) is
+// rendered as the tree of host elements that its template describes, with the
+// values of its holes: a node's props are its static props and the values of
+// its dynamic props, and its children are its children in order (static text,
+// nodes, and the values of text holes and slots), passed like JSX passes them
+// (one child as is, several as an array). This renders the same HTML, text
+// separators and tree positions (for useId) as those host elements, and the
+// client hydrates a block from it (the hydration of a block follows the same
+// structure).
+function renderBlock(
+  request: Request,
+  task: Task,
+  keyPath: KeyNode,
+  template: BlockTemplate,
+  props: Object,
+): void {
+  if (!enableCompiledBlocks) {
+    throw new Error('Compiled blocks are not enabled in this build of React.');
+  }
+  if (!canRenderBlockTemplate(task.formatContext)) {
+    throw new Error(
+      'Compiled blocks can only be rendered inside HTML content, not inside <svg> or <math>.',
+    );
+  }
+  const values: $ReadOnlyArray<mixed> = props.v;
+  const root = template.description;
+  renderHostElement(
+    request,
+    task,
+    keyPath,
+    root[0],
+    getBlockNodeProps(root, values),
+  );
+}
+
+function getBlockNodeProps(
+  node: BlockNodeDescription,
+  values: $ReadOnlyArray<mixed>,
+): Object {
+  const props: {[string]: mixed} = {};
+  const staticProps = node[1];
+  if (staticProps !== null) {
+    for (const name in staticProps) {
+      props[name] = staticProps[name];
+    }
+  }
+  const dynamicProps = node[2];
+  if (dynamicProps !== null) {
+    for (let i = 0; i < dynamicProps.length; i++) {
+      props[dynamicProps[i][0]] = values[dynamicProps[i][1]];
+    }
+  }
+  const children = node[3];
+  if (children.length === 1) {
+    props.children = getBlockChild(children[0], values, false);
+  } else if (children.length > 1) {
+    const renderedChildren = new Array<mixed>(children.length);
+    for (let i = 0; i < children.length; i++) {
+      renderedChildren[i] = getBlockChild(children[i], values, true);
+    }
+    props.children = renderedChildren;
+  }
+  return props;
+}
+
+function getBlockChild(
+  child: BlockChildDescription,
+  values: $ReadOnlyArray<mixed>,
+  inArray: boolean,
+): mixed {
+  if (child === null || typeof child === 'string') {
+    return child;
+  }
+  if (isArray(child)) {
+    const node: BlockNodeDescription = child as any;
+    // A host element that is not created by user code: it has no owner, key or
+    // ref, and is not validated for keys.
+    return createBlockElement(node[0], getBlockNodeProps(node, values));
+  }
+  const hole: any = child;
+  if (typeof hole.t === 'number') {
+    return values[hole.t];
+  }
+  const value = values[hole.s];
+  // A slot is a static child of its parent, like a JSX child: its elements are
+  // not validated for keys as items of the parent's children array. A
+  // fragment around the value keeps its HTML and tree position.
+  return inArray &&
+    typeof value === 'object' &&
+    value !== null &&
+    !isArray(value)
+    ? createBlockElement(REACT_FRAGMENT_TYPE, {children: value})
+    : value;
+}
+
+// A host element or fragment that is not created by user code: it has no
+// owner, key or ref, and is not validated for keys.
+function createBlockElement(type: mixed, props: Object): mixed {
+  const element: any = {
+    $$typeof: REACT_ELEMENT_TYPE,
+    type,
+    key: null,
+    ref: null,
+    props,
+  };
+  if (__DEV__) {
+    element._owner = null;
+    element._debugStack = null;
+    element._debugTask = null;
+    element._debugInfo = null;
+  }
+  return element;
+}
+
 function renderElement(
   request: Request,
   task: Task,
@@ -3177,10 +3298,8 @@ function renderElement(
       }
       // $FlowFixMe[invalid-compare]
       case REACT_BLOCK_TEMPLATE_TYPE: {
-        throw new Error(
-          'Compiled blocks cannot be rendered on the server yet. ' +
-            'Compile server-rendered components without enableJsxBlocks.',
-        );
+        renderBlock(request, task, keyPath, type as any, props);
+        return;
       }
     }
   }

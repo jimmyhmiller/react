@@ -84,6 +84,7 @@ export {
   hoistPreambleState,
   isPreambleReady,
   isPreambleContext,
+  canRenderBlockTemplate,
 } from 'react-dom-bindings/src/server/ReactFizzConfigDOM';
 
 import escapeTextForBrowser from 'react-dom-bindings/src/server/escapeTextForBrowser';

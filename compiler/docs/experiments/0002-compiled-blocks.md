@@ -162,10 +162,8 @@ Semantics that are preserved:
   and a slot as a host parent.
 
 Explicit errors instead of silent misbehavior (all have production error codes
-609-620 in `scripts/error-codes/codes.json`):
+in `scripts/error-codes/codes.json`):
 
-- **Hydration**: `Compiled blocks do not support hydration yet.`
-- **Server rendering** (Fizz): `Compiled blocks cannot be rendered on the server yet.`
 - **Gesture transitions**: `Compiled blocks do not support startGestureTransition() yet.`
 - **SVG/MathML content**: `Compiled blocks can only be rendered inside HTML content, not inside <svg> or <math>.`
 
@@ -185,6 +183,58 @@ events, layout or `textContent`):
   `''`). Serialized HTML is identical.
 - Nodes inside a block are invisible to fiber-based tooling (DevTools, test
   selectors, the Scope API); only the block root is a host instance.
+
+## Server rendering and hydration
+
+**Server rendering** (`renderBlock` in `ReactFizzServer.js`). A block renders as
+the tree of host elements its template describes: a node's props are its static
+props and the values of its dynamic props, and its children are passed like JSX
+passes them (one child as is, several as an array; a slot's element among
+several children is wrapped in a fragment so that it is not validated for keys
+as an array item). The HTML, text separators, tree positions (`useId`),
+Suspense boundaries in slots, and prerendering are therefore those of the
+equivalent host elements. `canRenderBlockTemplate` (server config) rejects
+blocks inside `<svg>` or `<math>` like the client.
+
+Template children that React renders as nothing (`null`, `undefined`, booleans,
+`''`) are kept in the template as `null`: they have no DOM node, but count for
+their siblings' tree positions, so a block also hydrates HTML rendered by the
+equivalent JSX (for example by a server compiled without blocks).
+
+**Hydration** ("Hydration" in `ReactDOMBlocks.js`, `ReactFiberHydrationContext.js`).
+A new block in a hydrating tree claims its root element (`canHydrateInstance`
+with the root's props) and walks its template over the server DOM with React's
+hydratable-node navigation:
+
+- static elements and text, text holes, and slots holding text or nothing are
+  matched by the block; a text that differs is a text hydration mismatch, and a
+  missing or different node a structure mismatch, like for host components
+  (the nearest boundary renders on the client);
+- a slot holding anything else is rendered by a slot fiber (lists included),
+  which pushes the slot's tree position (`Slot.treePath`), hydrates the content
+  from the walk's position with the normal cursor, and hands the cursor back;
+- the walk's nodes (by pre-order index) become the instance's references; inputs
+  go through `hydrateProperties` like host inputs; in development, the elements'
+  props are diffed against the server like host components;
+- a text hole whose value is empty has no server text node: its node is created
+  and inserted in the before-mutation phase of the commit (`Snapshot`), while
+  the positions found by the walk are still valid.
+
+Hydrated list slots keep rendering their items through fibers while they hold a
+list (the rule that keeps items' host instances), so a hydrated list does not
+use the fiber-free path until the slot is emptied.
+
+Tests: `packages/react-dom/src/__tests__/ReactDOMCompiledBlocksServer-test.js`
+(HTML identical to host elements; hydration with events, updates, empty text
+holes, slots, `useId`, lists, inputs, Suspense, mismatches, and HTML from JSX).
+The benchmark apps are also rendered on the server and hydrated for every React
+variant: `node scripts/verify.mjs --ssr` compares every workload step with the
+hydrated uncompiled app and fails on hydration errors; `bench.mjs --ssr`
+measures hydrated pages. Hydration script time of the board apps with every
+experiment is 3–4% above the React Compiler alone (for example 33.9 vs 32.8 ms
+for the context board), and workloads on hydrated pages are within noise of
+client-rendered pages. The benchmark lists start empty on the server, so large
+hydrated block lists are not covered by the benchmark.
 
 ## Compiler rules (`react_compiler_optimization/src/jsx_blocks.rs`)
 

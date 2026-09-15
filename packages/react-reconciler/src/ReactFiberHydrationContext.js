@@ -29,6 +29,8 @@ import {
   HostRoot,
   SuspenseComponent,
   ActivityComponent,
+  HostBlock,
+  HostBlockSlot,
 } from './ReactWorkTags';
 
 import {createCapturedValueAtFiber} from './ReactCapturedValue';
@@ -64,11 +66,21 @@ import {
   isFormStateMarkerMatching,
   validateHydratableInstance,
   validateHydratableTextInstance,
+  canHydrateBlockInstance,
+  startBlockHydration,
+  hydrateBlockToSlot,
+  getBlockHydrationCursor,
+  resumeBlockHydration,
+  didBlockHydrationTextMismatch,
+  getBlockSlotTreePath,
+  finishBlockHydration,
+  diffHydratedBlockForDevWarnings,
 } from './ReactFiberConfig';
 import {OffscreenLane} from './ReactFiberLane';
 import {
   getSuspendedTreeContext,
   restoreSuspendedTreeContext,
+  pushTreeId,
 } from './ReactFiberTreeContext';
 import {queueRecoverableErrors} from './ReactFiberWorkLoop';
 import {getRootHostContainer, getHostContext} from './ReactFiberHostContext';
@@ -744,6 +756,8 @@ function popToNextHostParent(fiber: Fiber): void {
       case HostComponent:
       case ActivityComponent:
       case SuspenseComponent:
+      case HostBlock:
+      case HostBlockSlot:
         rootOrSingletonContext = false;
         return;
       case HostSingleton:
@@ -967,6 +981,118 @@ export function emitPendingHydrationWarnings() {
     }
   }
 }
+
+// Compiled blocks (see "Hydration" in react-dom-bindings ReactDOMBlocks). A
+// block claims its root element and walks its template over the server DOM.
+// Its HostBlockSlot fibers hydrate the content of the slots that need fibers
+// from the walk's position, in order, and the walk continues after each one.
+
+function tryToClaimNextHydratableBlockInstance(fiber: Fiber): void {
+  if (!isHydrating) {
+    return;
+  }
+  const template = fiber.type;
+  const values = fiber.pendingProps.v;
+  const nextInstance = nextHydratableInstance;
+  const instance =
+    nextInstance === null
+      ? null
+      : canHydrateBlockInstance(
+          nextInstance,
+          template,
+          values,
+          rootOrSingletonContext,
+        );
+  if (instance === null) {
+    warnNonHydratedInstance(fiber, nextInstance);
+    throwOnHydrationMismatch(fiber);
+  }
+  fiber.stateNode = instance;
+  // The walk, until the block completes.
+  fiber.memoizedState = startBlockHydration(template, values, instance as any);
+  hydrationParentFiber = fiber;
+  // The block's children are slots, which start at their own position.
+  nextHydratableInstance = null;
+  rootOrSingletonContext = false;
+}
+
+function enterHydrationStateOfBlockSlot(fiber: Fiber): void {
+  if (!isHydrating) {
+    return;
+  }
+  const block: Fiber = fiber.return as any;
+  const state = block.memoizedState;
+  if (!hydrateBlockToSlot(state, fiber.index)) {
+    throwOnHydrationMismatch(block, didBlockHydrationTextMismatch(state));
+  }
+  hydrationParentFiber = fiber;
+  nextHydratableInstance = getBlockHydrationCursor(state) as any;
+  rootOrSingletonContext = false;
+  // The tree position of the slot's content, as the server rendered it.
+  const treePath = getBlockSlotTreePath(block.type, fiber.index);
+  for (let i = 0; i < treePath.length; i += 2) {
+    pushTreeId(fiber, treePath[i], treePath[i + 1]);
+  }
+}
+
+function popHydrationStateOfBlockSlot(fiber: Fiber): void {
+  if (fiber !== hydrationParentFiber) {
+    return;
+  }
+  const block: Fiber = fiber.return as any;
+  if (!isHydrating) {
+    popToNextHostParent(fiber);
+    isHydrating = true;
+    return;
+  }
+  resumeBlockHydration(block.memoizedState, nextHydratableInstance as any);
+  hydrationParentFiber = block;
+  nextHydratableInstance = null;
+}
+
+// Completes the hydration of a block: returns 0 if the block was not hydrated,
+// 1 if it was, and 2 if its commit must insert nodes before mutations (see
+// commitHydratedBlockInstance).
+function popHydrationStateOfBlock(
+  fiber: Fiber,
+  hostContext: HostContext,
+): 0 | 1 | 2 {
+  if (fiber !== hydrationParentFiber) {
+    return 0;
+  }
+  if (!isHydrating) {
+    popToNextHostParent(fiber);
+    isHydrating = true;
+    return 0;
+  }
+  const state = fiber.memoizedState;
+  if (!hydrateBlockToSlot(state, -1)) {
+    throwOnHydrationMismatch(fiber, didBlockHydrationTextMismatch(state));
+  }
+  if (__DEV__) {
+    if (!didSuspendOrErrorDEV) {
+      const differences = diffHydratedBlockForDevWarnings(state, hostContext);
+      if (differences !== null) {
+        const diffNode = buildHydrationDiffNode(fiber, 0);
+        diffNode.serverProps = differences;
+      }
+    }
+  }
+  const needsCommit = finishBlockHydration(state, hostContext, fiber);
+  fiber.memoizedState = null;
+  popToNextHostParent(fiber);
+  nextHydratableInstance = hydrationParentFiber
+    ? getNextHydratableSibling(fiber.stateNode)
+    : null;
+  return needsCommit ? 2 : 1;
+}
+
+export {
+  tryToClaimNextHydratableBlockInstance,
+  enterHydrationStateOfBlockSlot,
+  popHydrationStateOfBlockSlot,
+  popHydrationStateOfBlock,
+};
 
 export {
   warnIfHydrating,

@@ -193,6 +193,7 @@ fn node_description(node: &BlockNode) -> Expression {
                 BlockChild::Element(element) => node_description(element),
                 BlockChild::TextHole(hole) => object(vec![("t".to_string(), number(*hole as f64))]),
                 BlockChild::Slot(hole) => object(vec![("s".to_string(), number(*hole as f64))]),
+                BlockChild::Nothing => null(),
             })
             .collect(),
     );

@@ -61,6 +61,10 @@ pub enum BlockChild {
     Element(BlockNode),
     TextHole(u32),
     Slot(u32),
+    /// A child that React renders as nothing (`null`, `undefined`, a boolean or
+    /// `""`). It has no DOM node, but counts as a child for the tree positions
+    /// of its siblings (`useId`), like a JSX child.
+    Nothing,
 }
 
 impl BlockNode {
@@ -112,6 +116,7 @@ impl BlockNode {
                 BlockChild::TextHole(hole) => {
                     let _ = write!(key, ";t{}", hole);
                 }
+                BlockChild::Nothing => key.push_str(";0"),
                 BlockChild::Slot(hole) => {
                     let _ = write!(key, ";s{}", hole);
                 }

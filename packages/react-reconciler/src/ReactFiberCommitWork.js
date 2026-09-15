@@ -164,6 +164,7 @@ import {
   clearSuspenseBoundaryFromContainer,
   createContainerChildSet,
   clearContainer,
+  commitHydratedBlockInstance,
   prepareScopeUpdate,
   prepareForCommit,
   beforeActiveInstanceBlur,
@@ -545,12 +546,19 @@ function commitBeforeMutationEffectsOnFiber(
       }
       break;
     }
+    case HostBlock: {
+      if ((flags & Snapshot) !== NoFlags) {
+        // A hydrated block inserts the text nodes of its empty text holes before
+        // any DOM mutation changes the positions found when hydrating.
+        commitHydratedBlockInstance(finishedWork.stateNode);
+      }
+      break;
+    }
     case HostComponent:
     case HostHoistable:
     case HostSingleton:
     case HostText:
     case HostPortal:
-    case HostBlock:
     case HostBlockSlot:
     case IncompleteClassComponent:
       // Nothing to do for these component types

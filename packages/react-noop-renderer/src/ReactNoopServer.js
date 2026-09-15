@@ -351,6 +351,10 @@ const ReactNoopServer = ReactFizzServer({
   isPreambleContext() {
     return false;
   },
+  // Compiled blocks describe HTML elements.
+  canRenderBlockTemplate() {
+    return false;
+  },
 });
 
 type Options = {

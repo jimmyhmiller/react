@@ -22,6 +22,7 @@ import {
   SimpleMemoComponent,
   ClassComponent,
   HostText,
+  HostBlock,
 } from './ReactWorkTags';
 
 import {enableSrcObject} from 'shared/ReactFeatureFlags';
@@ -82,6 +83,9 @@ function describeFiberType(fiber: Fiber): null | string {
     case HostSingleton:
     case HostComponent:
       return fiber.type;
+    case HostBlock:
+      // The root element of the block's template.
+      return fiber.type.description[0];
     case LazyComponent:
       return 'Lazy';
     case ActivityComponent:

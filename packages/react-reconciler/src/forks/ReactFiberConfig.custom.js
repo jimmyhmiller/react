@@ -48,6 +48,7 @@ export opaque type InstanceMeasurement = mixed;
 export type EventResponder = any;
 export type GestureTimeline = any;
 export type FragmentInstanceType = null;
+export opaque type BlockHydrationState = mixed;
 
 export const rendererVersion = $$$config.rendererVersion;
 export const rendererPackageName = $$$config.rendererPackageName;
@@ -317,4 +318,18 @@ export const getBlockInlineItemTemplate = $$$config.getBlockInlineItemTemplate;
 export const getBlockInlineItemRoot = $$$config.getBlockInlineItemRoot;
 export const adoptBlockInlineItem = $$$config.adoptBlockInlineItem;
 export const getBlockValues = $$$config.getBlockValues;
+export const canHydrateBlockInstance = $$$config.canHydrateBlockInstance;
+export const startBlockHydration = $$$config.startBlockHydration;
+export const hydrateBlockToSlot = $$$config.hydrateBlockToSlot;
+export const getBlockHydrationCursor = $$$config.getBlockHydrationCursor;
+export const resumeBlockHydration = $$$config.resumeBlockHydration;
+export const didBlockHydrationTextMismatch =
+  $$$config.didBlockHydrationTextMismatch;
+export const getBlockSlotTreePath = $$$config.getBlockSlotTreePath;
+export const isHydratedBlockSlotInline = $$$config.isHydratedBlockSlotInline;
+export const finishBlockHydration = $$$config.finishBlockHydration;
+export const diffHydratedBlockForDevWarnings =
+  $$$config.diffHydratedBlockForDevWarnings;
+export const commitHydratedBlockInstance =
+  $$$config.commitHydratedBlockInstance;
 export const getBlockRootHostProps = $$$config.getBlockRootHostProps;

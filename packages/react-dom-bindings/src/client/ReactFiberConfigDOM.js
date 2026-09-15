@@ -7063,8 +7063,109 @@ export {
   adoptBlockInlineItem,
   getBlockValues,
   getBlockRootHostProps,
+  hydrateBlockToSlot,
+  getBlockHydrationCursor,
+  resumeBlockHydration,
+  didBlockHydrationTextMismatch,
+  getBlockSlotTreePath,
+  isHydratedBlockSlotInline,
 } from './ReactDOMBlocks';
-export type {BlockInlineItem} from './ReactDOMBlocks';
+export type {BlockInlineItem, BlockHydrationState} from './ReactDOMBlocks';
+import {
+  getBlockRootTag,
+  getBlockRootProps,
+  startBlockHydration as startBlockHydrationImpl,
+  finishBlockHydration as finishBlockHydrationImpl,
+  getBlockHydrationElements,
+  getBlockHydrationElementProps,
+  commitHydratedBlockInstance as commitHydratedBlockInstanceImpl,
+} from './ReactDOMBlocks';
+import type {BlockHydrationState} from './ReactDOMBlocks';
+
+// Hydration of compiled blocks (see "Hydration" in ReactDOMBlocks).
+
+// The root element of a server-rendered block, like canHydrateInstance.
+export function canHydrateBlockInstance(
+  instance: HydratableInstance,
+  template: BlockTemplate,
+  values: BlockValues,
+  inRootOrSingleton: boolean,
+): null | Instance {
+  return canHydrateInstance(
+    instance,
+    getBlockRootTag(template),
+    getBlockRootProps(template, values),
+    inRootOrSingleton,
+  );
+}
+
+const blockHydrationHost = {
+  getFirstHydratableChild(parent: Element): null | Node {
+    return getFirstHydratableChild(parent as any) as any;
+  },
+  getNextHydratableSibling(node: Node): null | Node {
+    return getNextHydratableSibling(node as any) as any;
+  },
+  canHydrateElement(node: Node, tag: string, props: Object): null | Element {
+    return canHydrateInstance(node as any, tag, props, false) as any;
+  },
+};
+
+export function startBlockHydration(
+  template: BlockTemplate,
+  values: BlockValues,
+  instance: Instance,
+): BlockHydrationState {
+  return startBlockHydrationImpl(
+    template,
+    values,
+    instance,
+    blockHydrationHost,
+  );
+}
+
+// Creates the instance of a hydrated block. Returns whether its commit must
+// insert nodes (commitHydratedBlockInstance, before mutations).
+export function finishBlockHydration(
+  state: BlockHydrationState,
+  hostContext: HostContext,
+  internalInstanceHandle: Object,
+): boolean {
+  return finishBlockHydrationImpl(
+    state,
+    internalInstanceHandle,
+    (node, props) => {
+      hydrateProperties(node, 'input', props, hostContext);
+    },
+  );
+}
+
+// The props of the first element of a hydrated block that differ from the
+// server, in development.
+export function diffHydratedBlockForDevWarnings(
+  state: BlockHydrationState,
+  hostContext: HostContext,
+): null | $ReadOnly<Props> {
+  const elements = getBlockHydrationElements(state);
+  const props = getBlockHydrationElementProps(state);
+  for (let i = 0; i < elements.length; i++) {
+    const element = elements[i];
+    const differences = diffHydratedProperties(
+      element,
+      element.nodeName.toLowerCase(),
+      props[i],
+      hostContext,
+    );
+    if (differences !== null) {
+      return differences;
+    }
+  }
+  return null;
+}
+
+export function commitHydratedBlockInstance(instance: Instance): void {
+  commitHydratedBlockInstanceImpl(instance);
+}
 
 export function createBlockInstance(
   template: BlockTemplate,

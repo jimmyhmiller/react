@@ -25,7 +25,12 @@
 //   and Svelte remove it where React sets it to ''),
 // - comment nodes are ignored (Vue and Svelte use them as anchors).
 //
-//   node scripts/verify.mjs [--chromium PATH] [--variant NAME]...
+// With --ssr, the React variants' server-rendered pages (dist/<variant>/<app>/ssr,
+// see build.mjs) are hydrated and compared the same way, with the hydrated
+// `no-compiler` page as the reference. A hydration mismatch logs an error, which
+// fails the check.
+//
+//   node scripts/verify.mjs [--chromium PATH] [--variant NAME]... [--ssr]
 
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
@@ -38,9 +43,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REFERENCE = 'no-compiler';
 
 function parseArgs(argv) {
-  const args = {chromium: null, variants: []};
+  const args = {chromium: null, variants: [], ssr: false};
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--chromium') {
+    if (argv[i] === '--ssr') {
+      args.ssr = true;
+    } else if (argv[i] === '--chromium') {
       args.chromium = argv[++i];
     } else if (argv[i] === '--variant') {
       args.variants.push(argv[++i]);
@@ -51,7 +58,7 @@ function parseArgs(argv) {
   return args;
 }
 
-async function snapshots(browser, variant, workload) {
+async function snapshots(browser, variant, workload, ssr) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const errors = [];
@@ -63,10 +70,14 @@ async function snapshots(browser, variant, workload) {
   });
   try {
     const url = pathToFileURL(
-      path.join(ROOT, 'dist', variant.name, workload.app, 'index.html'),
+      ssr
+        ? path.join(ROOT, 'dist', variant.name, workload.app, 'ssr', 'index.html')
+        : path.join(ROOT, 'dist', variant.name, workload.app, 'index.html'),
     ).href;
     await page.goto(url);
-    await page.waitForSelector(APP_PAGES[workload.app].ready);
+    await page.waitForSelector(
+      ssr ? 'body[data-hydrated]' : APP_PAGES[workload.app].ready,
+    );
     await page.evaluate(PAGE_HELPERS);
     const result = [];
     const capture = async label => {
@@ -172,16 +183,18 @@ async function main() {
         browser,
         VARIANTS.find(v => v.name === REFERENCE),
         workload,
+        args.ssr,
       );
       for (const variant of VARIANTS) {
         if (
           variant.name === REFERENCE ||
+          (args.ssr && variant.framework !== 'react') ||
           (args.variants.length !== 0 && !args.variants.includes(variant.name)) ||
           !variantHasApp(variant, APPS.find(app => app.name === workload.app))
         ) {
           continue;
         }
-        const actual = await snapshots(browser, variant, workload);
+        const actual = await snapshots(browser, variant, workload, args.ssr);
         const form = variant.framework === 'react' ? 'exact' : 'state';
         for (let i = 0; i < reference.length; i++) {
           const expected = reference[i].html[form];

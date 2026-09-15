@@ -563,7 +563,7 @@ impl TreeBuilder<'_> {
                 Some(InstructionValue::Primitive { value, .. }) => {
                     match static_text(value) {
                         StaticText::Text(text) => children.push(BlockChild::Text(text)),
-                        StaticText::Nothing => {}
+                        StaticText::Nothing => children.push(BlockChild::Nothing),
                         StaticText::NotStatic => {
                             children.push(BlockChild::TextHole(self.hole(child)));
                         }

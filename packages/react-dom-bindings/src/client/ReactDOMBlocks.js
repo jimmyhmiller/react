@@ -47,6 +47,8 @@
 //         | Node          // static element
 //         | {t: holeIndex} // text hole
 //         | {s: holeIndex} // slot hole
+//         | null          // a child that renders nothing: it has no node, but
+//                         // counts for its siblings' tree positions (useId)
 //
 // The analysis of a description is independent of the DOM. The prototype DOM
 // subtree is built once per document; instances are deep clones of it.
@@ -61,6 +63,7 @@ import {
   setBlockProp,
   setInitialProperties,
   updateProperties,
+  hydrateText,
 } from './ReactDOMComponent';
 import {
   precacheFiberNode,
@@ -102,6 +105,12 @@ type Slot = {
   position: number,
   // The slot is the only child of its parent element.
   soleChild: boolean,
+  // The tree position of the slot's content (for useId), as pairs of the
+  // number of children and the index of the child, for each element from the
+  // root to the slot with more than one child: the positions that the
+  // equivalent host elements give their children (see renderBlock in
+  // ReactFizzServer).
+  treePath: $ReadOnlyArray<number>,
 };
 
 type Input = {
@@ -120,6 +129,10 @@ type EventHole = {
 type BlockAnalysis = {
   // Child index paths, from the block root, of every node a hole refers to.
   refPaths: Array<Array<number>>,
+  // The index of the node of each reference among the template's nodes in
+  // pre-order (elements, static text and text holes), for hydration.
+  refNodes: Array<number>,
+  nodeCount: number,
   holes: Array<Hole>,
   slots: Array<Slot>,
   inputs: Array<Input>,
@@ -152,6 +165,9 @@ export type BlockInstanceData = {
   // an inline list item by adoptBlockInlineItem). The reconciler updates and
   // removes it; a list only positions it.
   ownedByFiber: boolean,
+  // Text nodes of a hydrated block that its commit inserts (see
+  // commitHydratedBlockInstance).
+  pendingTexts: null | Array<PendingText>,
 };
 
 export {isBlockTemplate};
@@ -173,6 +189,8 @@ function getBlockAnalysis(template: BlockTemplate): BlockAnalysis {
   }
   const analysis: BlockAnalysis = {
     refPaths: [],
+    refNodes: [],
+    nodeCount: 0,
     holes: [],
     slots: [],
     inputs: [],
@@ -197,7 +215,7 @@ function getBlockAnalysis(template: BlockTemplate): BlockAnalysis {
       }
     }
   }
-  analyzeNode(analysis, rootNode, []);
+  analyzeNode(analysis, rootNode, [], [], analysis.nodeCount++);
   for (let i = 0; i < analysis.holes.length; i++) {
     if (analysis.holes[i] === undefined) {
       throw new Error(
@@ -209,8 +227,13 @@ function getBlockAnalysis(template: BlockTemplate): BlockAnalysis {
   return analysis;
 }
 
-function addRef(analysis: BlockAnalysis, path: Array<number>): number {
+function addRef(
+  analysis: BlockAnalysis,
+  path: Array<number>,
+  nodeIndex: number,
+): number {
   analysis.refPaths.push(path.slice());
+  analysis.refNodes.push(nodeIndex);
   return analysis.refPaths.length - 1;
 }
 
@@ -227,6 +250,8 @@ function analyzeNode(
   analysis: BlockAnalysis,
   node: BlockNodeDescription,
   path: Array<number>,
+  treePath: $ReadOnlyArray<number>,
+  nodeIndex: number,
 ): void {
   const tag = node[0];
   const staticProps = node[1];
@@ -237,7 +262,7 @@ function analyzeNode(
       throw new Error('Invalid block template: an input cannot have children.');
     }
     const inputIndex = analysis.inputs.length;
-    const ref = addRef(analysis, path);
+    const ref = addRef(analysis, path, nodeIndex);
     analysis.inputs.push({
       ref,
       staticProps: staticProps === null ? {} : staticProps,
@@ -261,7 +286,7 @@ function analyzeNode(
   let elementRef = -1;
   const getElementRef = () => {
     if (elementRef === -1) {
-      elementRef = addRef(analysis, path);
+      elementRef = addRef(analysis, path, nodeIndex);
     }
     return elementRef;
   };
@@ -287,6 +312,11 @@ function analyzeNode(
   let domIndex = 0;
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
+    if (child === null) {
+      continue;
+    }
+    const childTreePath =
+      children.length > 1 ? treePath.concat(children.length, i) : treePath;
     if (typeof child === 'object' && !isArray(child)) {
       const slotHole: mixed = (child as any).s;
       if (typeof slotHole === 'number') {
@@ -299,6 +329,7 @@ function analyzeNode(
               ? pendingSlots[0].position
               : analysis.positionCount++,
           soleChild: children.length === 1,
+          treePath: childTreePath,
         };
         analysis.slots.push(slot);
         setHole(analysis, slotHole, {
@@ -311,8 +342,9 @@ function analyzeNode(
     }
     // Every other child produces exactly one DOM node at domIndex.
     const childPath = path.concat(domIndex);
+    const childNodeIndex = analysis.nodeCount++;
     if (pendingSlots.length > 0) {
-      const nextStaticRef = addRef(analysis, childPath);
+      const nextStaticRef = addRef(analysis, childPath, childNodeIndex);
       for (let j = 0; j < pendingSlots.length; j++) {
         pendingSlots[j].nextStaticRef = nextStaticRef;
       }
@@ -321,11 +353,17 @@ function analyzeNode(
     if (typeof child === 'string') {
       // Static text.
     } else if (isArray(child)) {
-      analyzeNode(analysis, child as any, childPath);
+      analyzeNode(
+        analysis,
+        child as any,
+        childPath,
+        childTreePath,
+        childNodeIndex,
+      );
     } else if (typeof child.t === 'number') {
       setHole(analysis, child.t, {
         kind: TEXT_HOLE,
-        ref: addRef(analysis, childPath),
+        ref: addRef(analysis, childPath, childNodeIndex),
       });
     } else {
       throw new Error('Invalid block template child.');
@@ -378,7 +416,7 @@ function buildNode(
       element.appendChild(ownerDocument.createTextNode(child));
     } else if (isArray(child)) {
       element.appendChild(buildNode(child as any, ownerDocument));
-    } else if (typeof child === 'object') {
+    } else if (child !== null && typeof child === 'object') {
       if (typeof (child as any).t === 'number') {
         element.appendChild(ownerDocument.createTextNode(''));
       }
@@ -834,6 +872,7 @@ function createInstanceData(
       slotCount > 0 ? new Array<SlotContent>(slotCount).fill(null) : null,
     inputProps: inputs.length > 0 ? new Array<Object>(inputs.length) : null,
     ownedByFiber: false,
+    pendingTexts: null,
   };
   const eventHoles = analysis.eventHoles;
   for (let i = 0; i < eventHoles.length; i++) {
@@ -1097,6 +1136,405 @@ export function getBlockEventListener(
     }
   }
   return null;
+}
+
+// -----------------------------------------------------------------------------
+// Hydration
+// -----------------------------------------------------------------------------
+//
+// A server-rendered block is the HTML of the host elements its template
+// describes (see renderBlock in ReactFizzServer). The block's fiber claims the
+// root element, and the template is walked over the DOM: static elements and
+// text, text holes and slots holding text or nothing are matched by the block.
+// A slot whose value needs fibers (including a list, which is rendered by
+// fibers when hydrating) stops the walk; its HostBlockSlot fiber hydrates the
+// slot's content from the walk's position, and the walk continues from where
+// the content ended (hydrateBlockToSlot, resumeBlockHydration). The nodes of
+// the walk become the references of the block instance (finishBlockHydration).
+//
+// A text hole whose value is empty has no text node in the server HTML (like
+// an empty text child). Its text node is created, and inserted in the commit
+// phase before any DOM mutation, at the position the walk found
+// (commitHydratedBlockInstance).
+
+// Navigation over hydratable nodes, provided by the host config.
+export type BlockHydrationHost = {
+  getFirstHydratableChild: (parent: Element) => null | Node,
+  getNextHydratableSibling: (node: Node) => null | Node,
+  canHydrateElement: (node: Node, tag: string, props: Object) => null | Element,
+};
+
+type HydrationFrame = {
+  node: BlockNodeDescription,
+  element: Element,
+  // The element's props, if they were needed (see getFrameProps).
+  props: null | Object,
+  childIndex: number,
+};
+
+type PendingText = {
+  parent: Element,
+  node: Text,
+  before: null | Node,
+};
+
+export opaque type BlockHydrationState = {
+  template: BlockTemplate,
+  values: BlockValues,
+  root: Element,
+  host: BlockHydrationHost,
+  frames: Array<HydrationFrame>,
+  // The next hydratable node at the walk's position.
+  cursor: null | Node,
+  // The nodes of the walk, by pre-order index (see BlockAnalysis.refNodes).
+  nodes: Array<Node>,
+  nodeCount: number,
+  // In development, every element of the walk with its props, in order.
+  elements: null | Array<Element>,
+  elementProps: null | Array<Object>,
+  slotContents: null | Array<SlotContent>,
+  pendingTexts: null | Array<PendingText>,
+  // Whether a text did not match (as opposed to the structure).
+  textMismatch: boolean,
+};
+
+function getNodeProps(node: BlockNodeDescription, values: BlockValues): Object {
+  const props: {[string]: mixed} = {};
+  const staticProps = node[1];
+  if (staticProps !== null) {
+    for (const name in staticProps) {
+      props[name] = staticProps[name];
+    }
+  }
+  const dynamicProps = node[2];
+  if (dynamicProps !== null) {
+    for (let i = 0; i < dynamicProps.length; i++) {
+      props[dynamicProps[i][0]] = values[dynamicProps[i][1]];
+    }
+  }
+  return props;
+}
+
+// Whether matching an element needs its props: inputs (see
+// canHydrateInstance) and elements that may suppress hydration warnings.
+function hydrationNeedsProps(node: BlockNodeDescription): boolean {
+  if (__DEV__ || node[0] === 'input') {
+    return true;
+  }
+  const staticProps = node[1];
+  if (
+    staticProps !== null &&
+    hasOwnProperty.call(staticProps, 'suppressHydrationWarning')
+  ) {
+    return true;
+  }
+  const dynamicProps = node[2];
+  if (dynamicProps !== null) {
+    for (let i = 0; i < dynamicProps.length; i++) {
+      if (dynamicProps[i][0] === 'suppressHydrationWarning') {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+const noProps: {[string]: mixed} = {};
+
+// The props of a block's root element, without children.
+export function getBlockRootProps(
+  template: BlockTemplate,
+  values: BlockValues,
+): Object {
+  return getNodeProps(template.description, values);
+}
+
+export function getBlockRootTag(template: BlockTemplate): string {
+  return template.description[0];
+}
+
+// The tree position of a slot's content (see Slot.treePath).
+export function getBlockSlotTreePath(
+  template: BlockTemplate,
+  slotIndex: number,
+): $ReadOnlyArray<number> {
+  return getBlockAnalysis(template).slots[slotIndex].treePath;
+}
+
+// Whether a slot's value is rendered by a slot fiber when hydrating: anything
+// that is not text or nothing.
+export function isHydratedBlockSlotInline(value: mixed): boolean {
+  return isEmptySlotValue(value) || isTextSlotValue(value);
+}
+
+export function startBlockHydration(
+  template: BlockTemplate,
+  values: BlockValues,
+  root: Element,
+  host: BlockHydrationHost,
+): BlockHydrationState {
+  const analysis = getBlockAnalysis(template);
+  const rootNode = template.description;
+  const props = hydrationNeedsProps(rootNode)
+    ? getNodeProps(rootNode, values)
+    : null;
+  const nodes: Array<Node> = new Array(analysis.nodeCount);
+  nodes[0] = root;
+  return {
+    template,
+    values,
+    root,
+    host,
+    frames: [{node: rootNode, element: root, props, childIndex: 0}],
+    cursor: rootNode[0] === 'input' ? null : host.getFirstHydratableChild(root),
+    nodes,
+    nodeCount: 1,
+    elements: __DEV__ ? [root] : null,
+    elementProps: __DEV__ ? [props as any] : null,
+    slotContents:
+      analysis.slots.length > 0
+        ? new Array<SlotContent>(analysis.slots.length).fill(null)
+        : null,
+    pendingTexts: null,
+    textMismatch: false,
+  };
+}
+
+function claimText(
+  state: BlockHydrationState,
+  frame: HydrationFrame,
+  text: string,
+): null | Text {
+  const node = state.cursor;
+  if (node === null || node.nodeType !== TEXT_NODE_TYPE) {
+    return null;
+  }
+  if (!hydrateText(node as any, text, frame.props)) {
+    state.textMismatch = true;
+    return null;
+  }
+  state.cursor = state.host.getNextHydratableSibling(node);
+  return node as any;
+}
+
+const TEXT_NODE_TYPE = 3;
+
+// Walks the template up to the slot `slotIndex`, whose content is rendered by a
+// slot fiber, or to the end of the template if `slotIndex` is -1. Returns
+// false if the DOM does not match.
+export function hydrateBlockToSlot(
+  state: BlockHydrationState,
+  slotIndex: number,
+): boolean {
+  const analysis = getBlockAnalysis(state.template);
+  const values = state.values;
+  const frames = state.frames;
+  while (frames.length > 0) {
+    const frame = frames[frames.length - 1];
+    const children = frame.node[3];
+    if (frame.childIndex >= children.length) {
+      // Every node of the element was matched.
+      if (state.cursor !== null) {
+        return false;
+      }
+      frames.pop();
+      state.cursor =
+        frames.length > 0
+          ? state.host.getNextHydratableSibling(frame.element)
+          : null;
+      continue;
+    }
+    const child = children[frame.childIndex];
+    if (child === null) {
+      frame.childIndex++;
+      continue;
+    }
+    if (typeof child === 'string') {
+      const node = claimText(state, frame, child);
+      if (node === null) {
+        return false;
+      }
+      state.nodes[state.nodeCount++] = node;
+      frame.childIndex++;
+      continue;
+    }
+    if (isArray(child)) {
+      const node: BlockNodeDescription = child as any;
+      const props = hydrationNeedsProps(node)
+        ? getNodeProps(node, values)
+        : null;
+      const element =
+        state.cursor === null
+          ? null
+          : state.host.canHydrateElement(
+              state.cursor,
+              node[0],
+              props === null ? noProps : props,
+            );
+      if (element === null) {
+        return false;
+      }
+      state.nodes[state.nodeCount++] = element;
+      if (__DEV__) {
+        (state.elements as any).push(element);
+        (state.elementProps as any).push(props);
+      }
+      frame.childIndex++;
+      frames.push({node, element, props, childIndex: 0});
+      state.cursor =
+        node[0] === 'input'
+          ? null
+          : state.host.getFirstHydratableChild(element);
+      continue;
+    }
+    const hole: any = child;
+    if (typeof hole.t === 'number') {
+      const text = toTextContent(values[hole.t]);
+      let node: null | Text;
+      if (text === '') {
+        const ownerDocument: Document = frame.element.ownerDocument as any;
+        node = ownerDocument.createTextNode('');
+        let pendingTexts = state.pendingTexts;
+        if (pendingTexts === null) {
+          pendingTexts = state.pendingTexts = [];
+        }
+        pendingTexts.push({parent: frame.element, node, before: state.cursor});
+      } else {
+        node = claimText(state, frame, text);
+        if (node === null) {
+          return false;
+        }
+      }
+      state.nodes[state.nodeCount++] = node;
+      frame.childIndex++;
+      continue;
+    }
+    // A slot.
+    const slotHole: Hole = analysis.holes[hole.s];
+    if (slotHole.kind !== SLOT_HOLE) {
+      throw new Error('Invalid block template: expected a slot hole.');
+    }
+    const value = values[hole.s];
+    if (isHydratedBlockSlotInline(value)) {
+      if (isTextSlotValue(value)) {
+        const node = claimText(state, frame, toTextContent(value));
+        if (node === null) {
+          return false;
+        }
+        (state.slotContents as any)[slotHole.slot] = node;
+      }
+      frame.childIndex++;
+      continue;
+    }
+    if (slotHole.slot !== slotIndex) {
+      // Slots rendered by fibers are hydrated in order.
+      return false;
+    }
+    frame.childIndex++;
+    return true;
+  }
+  return slotIndex === -1;
+}
+
+// The next hydratable node at the walk's position: at a slot, the first node
+// of its content.
+export function getBlockHydrationCursor(
+  state: BlockHydrationState,
+): null | Node {
+  return state.cursor;
+}
+
+// Continues the walk after the content of a slot, at `cursor`.
+export function resumeBlockHydration(
+  state: BlockHydrationState,
+  cursor: null | Node,
+): void {
+  state.cursor = cursor;
+}
+
+export function didBlockHydrationTextMismatch(
+  state: BlockHydrationState,
+): boolean {
+  return state.textMismatch;
+}
+
+// The elements of a hydrated block and their props, in development, for
+// warnings about props that differ from the server.
+export function getBlockHydrationElements(
+  state: BlockHydrationState,
+): $ReadOnlyArray<Element> {
+  return state.elements as any;
+}
+
+export function getBlockHydrationElementProps(
+  state: BlockHydrationState,
+): $ReadOnlyArray<Object> {
+  return state.elementProps as any;
+}
+
+// Creates the instance of a hydrated block after the whole template was walked,
+// and returns whether its commit must insert text nodes.
+export function finishBlockHydration(
+  state: BlockHydrationState,
+  internalInstanceHandle: Fiber,
+  hydrateInputProperties: (node: Element, props: Object) => void,
+): boolean {
+  const template = state.template;
+  const analysis = getBlockAnalysis(template);
+  const refNodes = analysis.refNodes;
+  const refs: Array<Node> = new Array(refNodes.length);
+  for (let i = 0; i < refNodes.length; i++) {
+    const node = state.nodes[refNodes[i]];
+    if (node === undefined) {
+      throw new Error(
+        'A hydrated block is missing a node of its template. This is a bug ' +
+          'in React. Please file an issue.',
+      );
+    }
+    refs[i] = node;
+  }
+  const inputs = analysis.inputs;
+  const data: BlockInstanceData = {
+    template,
+    root: state.root,
+    key: null,
+    refs,
+    values: state.values,
+    slotContents: state.slotContents,
+    inputProps: inputs.length > 0 ? new Array<Object>(inputs.length) : null,
+    ownedByFiber: true,
+    pendingTexts: state.pendingTexts,
+  };
+  const eventHoles = analysis.eventHoles;
+  for (let i = 0; i < eventHoles.length; i++) {
+    setBlockEventNodeData(refs[eventHoles[i].ref] as any, data);
+  }
+  for (let i = 0; i < inputs.length; i++) {
+    const node: Element = refs[inputs[i].ref] as any;
+    const props = buildInputProps(inputs[i], state.values);
+    hydrateInputProperties(node, props);
+    updateFiberProps(node as any, props);
+    (data.inputProps as any)[i] = props;
+  }
+  precacheFiberNode(internalInstanceHandle, state.root);
+  setBlockInstanceData(state.root, data);
+  return state.pendingTexts !== null;
+}
+
+// Inserts the text nodes of the empty text holes of a hydrated block. Called
+// in the commit phase before DOM mutations, so the positions found by the walk
+// are still valid.
+export function commitHydratedBlockInstance(root: Element): void {
+  const data = getBlockInstanceData(root);
+  const pendingTexts = data.pendingTexts;
+  if (pendingTexts === null) {
+    return;
+  }
+  data.pendingTexts = null;
+  for (let i = 0; i < pendingTexts.length; i++) {
+    const {parent, node, before} = pendingTexts[i];
+    parent.insertBefore(node, before);
+  }
 }
 
 // -----------------------------------------------------------------------------

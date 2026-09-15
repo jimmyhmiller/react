@@ -22,7 +22,8 @@ export type BlockChildDescription =
   | string
   | BlockNodeDescription
   | {+t: number}
-  | {+s: number};
+  | {+s: number}
+  | null;
 
 export type BlockTemplate = {
   $$typeof: symbol,

@@ -120,7 +120,8 @@ top-down update workload and a nested-input typing workload.
 
 ## 6. Static islands in hydration
 
-Requires server rendering and hydration of blocks first. The compiler knows
+Server rendering and hydration of blocks are implemented (see "Server
+rendering and hydration" in 0002-compiled-blocks.md). The compiler knows
 which subtrees have no event holes, no state, no effects, no refs, and props
 fixed after the first render. Those need no hydration work (no fibers, no DOM
 matching), and blocks can hydrate by walking `refPaths` over the existing DOM.

@@ -8,9 +8,11 @@
 // Runs every workload against every built variant in headless Chromium.
 //
 //   node scripts/bench.mjs [--iterations N] [--warmup N] [--workload NAME]... [--app NAME]...
-//                          [--variant NAME]... [--chromium PATH]
+//                          [--variant NAME]... [--chromium PATH] [--ssr]
 //
 // `--variant` limits the run to the named variants plus their baselines.
+// `--ssr` runs the React variants' server-rendered pages (see build.mjs),
+// starting each workload once the page is hydrated.
 //
 // Each sample uses a fresh browser context and page. Variants are interleaved
 // round-robin within each iteration so that drift affects them equally.
@@ -34,6 +36,7 @@ function parseArgs(argv) {
     apps: [],
     variants: [],
     chromium: null,
+    ssr: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -63,6 +66,9 @@ function parseArgs(argv) {
         args.chromium = value;
         i++;
         break;
+      case '--ssr':
+        args.ssr = true;
+        break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -73,15 +79,19 @@ function parseArgs(argv) {
   return args;
 }
 
-async function runSample(browser, variant, workload) {
+async function runSample(browser, variant, workload, ssr) {
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
     const url = pathToFileURL(
-      path.join(ROOT, 'dist', variant.name, workload.app, 'index.html'),
+      ssr
+        ? path.join(ROOT, 'dist', variant.name, workload.app, 'ssr', 'index.html')
+        : path.join(ROOT, 'dist', variant.name, workload.app, 'index.html'),
     ).href;
     await page.goto(url);
-    await page.waitForSelector(APP_PAGES[workload.app].ready);
+    await page.waitForSelector(
+      ssr ? 'body[data-hydrated]' : APP_PAGES[workload.app].ready,
+    );
     await page.evaluate(PAGE_HELPERS);
     if (workload.setup !== '') {
       await page.evaluate(`(async () => { ${workload.setup}; await __bench.nextFrame(); })()`);
@@ -169,10 +179,13 @@ async function main() {
       for (let i = 0; i < args.warmup + args.iterations; i++) {
         const measured = i >= args.warmup;
         for (const variant of variants) {
-          if (!variantHasApp(variant, APPS.find(app => app.name === workload.app))) {
+          if (
+            !variantHasApp(variant, APPS.find(app => app.name === workload.app)) ||
+            (args.ssr && variant.framework !== 'react')
+          ) {
             continue;
           }
-          const steps = await runSample(browser, variant, workload);
+          const steps = await runSample(browser, variant, workload, args.ssr);
           if (!measured) {
             continue;
           }

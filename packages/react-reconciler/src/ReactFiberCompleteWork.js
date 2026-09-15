@@ -176,6 +176,8 @@ import {
   prepareToHydrateHostActivityInstance,
   prepareToHydrateHostSuspenseInstance,
   popHydrationState,
+  popHydrationStateOfBlock,
+  popHydrationStateOfBlockSlot,
   resetHydrationState,
   getIsHydrating,
   upgradeHydrationErrorsToRecoverable,
@@ -1628,6 +1630,21 @@ function completeWork(
     case HostBlock: {
       if (enableCompiledBlocks) {
         const template = workInProgress.type;
+        if (current === null) {
+          const hydrated = popHydrationStateOfBlock(
+            workInProgress,
+            getHostContext(),
+          );
+          if (hydrated !== 0) {
+            if (hydrated === 2) {
+              // Inserts the text nodes of empty text holes (see
+              // commitHydratedBlockInstance).
+              workInProgress.flags |= Snapshot;
+            }
+            bubbleProperties(workInProgress);
+            return null;
+          }
+        }
         if (current !== null && workInProgress.stateNode != null) {
           const oldProps = current.memoizedProps;
           if (
@@ -1665,6 +1682,7 @@ function completeWork(
     }
     case HostBlockSlot: {
       if (enableCompiledBlocks) {
+        popHydrationStateOfBlockSlot(workInProgress);
         // The adoption candidates are only needed while rendering the slot.
         workInProgress.memoizedState = null;
         bubbleProperties(workInProgress);

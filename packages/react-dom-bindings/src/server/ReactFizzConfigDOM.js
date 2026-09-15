@@ -1148,6 +1148,15 @@ export function getViewTransitionFormatContext(
   );
 }
 
+// Compiled blocks describe HTML elements, and can only be rendered where HTML
+// elements are (not inside <svg> or <math>), like on the client.
+export function canRenderBlockTemplate(formatContext: FormatContext): boolean {
+  return (
+    formatContext.insertionMode !== SVG_MODE &&
+    formatContext.insertionMode !== MATHML_MODE
+  );
+}
+
 export function isPreambleContext(formatContext: FormatContext): boolean {
   return formatContext.insertionMode === HTML_HEAD_MODE;
 }

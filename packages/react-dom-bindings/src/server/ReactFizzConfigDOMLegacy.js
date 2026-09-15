@@ -183,6 +183,7 @@ export {
   hoistPreambleState,
   isPreambleReady,
   isPreambleContext,
+  canRenderBlockTemplate,
 } from './ReactFizzConfigDOM';
 
 import escapeTextForBrowser from './escapeTextForBrowser';
