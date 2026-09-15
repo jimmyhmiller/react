@@ -68,6 +68,9 @@ pub struct ProgramContext {
     /// Timing data for profiling. Accumulates across all function compilations.
     pub timing: TimingData,
 
+    /// The static components of the module (see `WrapStaticIslands`).
+    pub static_components: react_compiler_optimization::static_islands::StaticComponents,
+
     /// Whether debug logging is enabled (HIR formatting after each pass).
     pub debug_enabled: bool,
 
@@ -115,6 +118,7 @@ impl ProgramContext {
             hook_guard_name: None,
             renames: Vec::new(),
             timing: TimingData::new(profiling),
+            static_components: FxHashMap::default(),
             debug_enabled,
             already_compiled: FxHashSet::default(),
             known_referenced_names: FxHashSet::default(),

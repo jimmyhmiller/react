@@ -3101,7 +3101,7 @@ function renderBlock(
   const values: $ReadOnlyArray<mixed> = props.v;
   const root = template.description;
   const rootProps = getBlockNodeProps(root, values);
-  if (enableStaticIslands && staticIslands.length > 0) {
+  if (enableStaticIslands && isRenderingStaticIsland) {
     // The block's other elements are rendered through renderElement.
     checkStaticIslandElement(root[0], rootProps);
   }
@@ -3195,16 +3195,26 @@ function createBlockElement(type: mixed, props: Object): mixed {
 // Only static content is delimited as an island, which the client leaves
 // dehydrated; other content is rendered as is and hydrated normally.
 
-// The stack of static islands being rendered: whether each is still static.
-const staticIslands: Array<{isStatic: boolean}> = [];
+// Whether a static island is being rendered, and whether the content of the
+// innermost one rendered so far is interactive (which makes the enclosing
+// islands interactive too).
+let isRenderingStaticIsland: boolean = false;
+let isStaticIslandInteractive: boolean = false;
 
 function markStaticIslandsInteractive(): void {
-  for (let i = 0; i < staticIslands.length; i++) {
-    staticIslands[i].isStatic = false;
-  }
+  isStaticIslandInteractive = true;
 }
 
 let staticIslandHooksDispatcher: null | Dispatcher = null;
+
+function markingStaticIslandsInteractive(
+  hook: (...args: Array<any>) => mixed,
+): (...args: Array<any>) => mixed {
+  return (...args: Array<any>) => {
+    markStaticIslandsInteractive();
+    return hook(...args);
+  };
+}
 
 // The hooks dispatcher inside static islands: every hook makes the islands
 // interactive, except the memo cache of compiled components.
@@ -3217,10 +3227,7 @@ function getStaticIslandHooksDispatcher(): Dispatcher {
       dispatcher[name] =
         name === 'useMemoCache' || typeof hook !== 'function'
           ? hook
-          : (...args: Array<any>) => {
-              markStaticIslandsInteractive();
-              return hook(...args);
-            };
+          : markingStaticIslandsInteractive(hook);
     }
     staticIslandHooksDispatcher = dispatcher;
   }
@@ -3324,23 +3331,29 @@ function renderStaticIsland(
   const textEmbeddedBefore = segment.lastPushedText;
   const startIndex = pushStartStaticIsland(segment.chunks, request.renderState);
   segment.lastPushedText = false;
-  const island = {isStatic: true};
-  staticIslands.push(island);
+  const prevIsRenderingStaticIsland = isRenderingStaticIsland;
+  const prevIsStaticIslandInteractive = isStaticIslandInteractive;
+  isRenderingStaticIsland = true;
+  isStaticIslandInteractive = false;
   const prevDispatcher = ReactSharedInternals.H;
   ReactSharedInternals.H = getStaticIslandHooksDispatcher();
   const childSegments = segment.children.length;
   const prevKeyPath = task.keyPath;
   task.keyPath = keyPath;
+  let isInteractive = true;
   try {
     renderNode(request, task, props.children, -1);
+    isInteractive = isStaticIslandInteractive;
   } finally {
     task.keyPath = prevKeyPath;
     ReactSharedInternals.H = prevDispatcher;
-    staticIslands.pop();
+    isRenderingStaticIsland = prevIsRenderingStaticIsland;
+    // An enclosing island is interactive if this one is (or threw).
+    isStaticIslandInteractive = prevIsStaticIslandInteractive || isInteractive;
   }
   // Content that suspended was split into other segments.
   const isStatic =
-    island.isStatic &&
+    !isInteractive &&
     task.blockedSegment === segment &&
     segment.children.length === childSegments;
   if (!isStatic) {
@@ -3369,7 +3382,7 @@ function renderElement(
   props: Object,
   ref: any,
 ): void {
-  if (enableStaticIslands && staticIslands.length > 0) {
+  if (enableStaticIslands && isRenderingStaticIsland) {
     checkStaticIslandElement(type, props);
   }
   if (typeof type === 'function') {

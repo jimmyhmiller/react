@@ -1,6 +1,6 @@
 # Experiment 0005: Static islands
 
-Status: design, in progress. Idea 6 of `ideas.md`.
+Status: implemented (runtime and compiler), measured. Idea 6 of `ideas.md`.
 
 ## Goal
 
@@ -82,19 +82,46 @@ Suspense end comment, so a dehydrated Activity boundary (or island) directly in
 a Suspense boundary that shows its fallback also hid the nodes after it. The
 walk now counts Activity and island comments.
 
-### Compiler
+### Compiler: `enableStaticIslands`
 
-A JSX element is wrapped in `unstable_StaticIsland` when its subtree looks
-static where it is created: host elements without event handlers, refs or
-hydration-sensitive props and tags, text, lists, and components of the same
-module that call no hooks and only render such subtrees. Values of unknown type
-may be rendered (the server checks what they are). The element must be at an
-exclusive position (the island replaces it, like a block), and the subtree must
-be large enough that skipping its hydration pays for the boundary.
+`WrapStaticIslands` (`react_compiler_optimization/src/static_islands.rs`) runs
+after `OptimizePropsMethodCalls`, before `CompileJsxBlocks` (the child of an
+island is at a fixed position, so its content is still compiled into blocks),
+in client and SSR output. It requires the react/compiler-runtime module, and
+imports the element type as `StaticIsland` (a JSX tag starting with a lowercase
+letter would be a host element name).
+
+- **Static components** (`collect_static_components` in `program.rs`): the
+  module components of the inlining analysis (declared at module scope, only
+  referenced as JSX tags), lowered on their own, that call no hooks and whose
+  every element (in nested functions too) is allowed. The set is computed as a
+  greatest fixpoint, so components that render each other are static together.
+  Each static component has a weight: the weight of the elements it creates,
+  with the elements of a `.map` callback counting at least 3.
+- **Allowed elements**: host elements outside the hydration-sensitive tags
+  (the server's list), without event handler props, spread props, `ref`,
+  `autoFocus`, `popover`, `popoverTarget` or `formAction`, and elements of
+  static components.
+- **Static subtrees**: an allowed element whose element operands (children, and
+  props that are elements) are created only for it and static, and whose `.map`
+  children have callbacks with allowed elements. Other operands are allowed
+  (props, calls, local variables): the server checks what they render.
+- **Wrapping**: top down, an element is wrapped if no enclosing element is, its
+  subtree is static, its weight is at least 3 (host elements and unknown
+  children count 1, lists 3, static component elements their component's
+  weight), and it is at an exclusive position: no other element of the same
+  type can be rendered at its positions (`Positions` of the blocks
+  experiment, with a variant for component elements), so that replacing its
+  type with an island never changes which DOM node or component instance React
+  reuses. The island takes the element's key. Lists inside an island are not
+  wrapped again, and neither are the elements of static components (their
+  callers wrap them), so islands are not nested needlessly.
 
 Props of the subtree may change: a dehydrated island that receives new props is
 hydrated then. Server and client must both be compiled with islands (a client
 island hydrates server HTML without island comments like any content).
+
+Fixtures: `packages/babel-plugin-react-compiler-rust/src/__tests__/fixtures/experimental/static-islands/`.
 
 ## Semantics
 
@@ -108,3 +135,44 @@ Accepted differences:
   reports it (see above).
 - Components inside a dehydrated island do not run on the client and are not
   visible to DevTools until the island is hydrated.
+
+## Results
+
+Median of 30 page loads, Chromium, production builds of this repository's React
+(`scripts/hydration.mjs`); ms from `hydrateRoot` to the commit of the
+hydration, and total script time (bundle evaluation included). Islands are
+added to the React Compiler alone and to every other experiment.
+
+| page | variant | hydration | total script |
+|---|---|---|---|
+| docs | React Compiler | 10.7 | 30.4 |
+| docs | + islands | **6.9** | **26.5** |
+| docs | every experiment | 12.3 | 31.9 |
+| docs | + islands | **7.5** | **27.3** |
+| board | React Compiler | 15.8 | 34.5 |
+| board | + islands | **13.2** | **31.8** |
+| board | every experiment | 16.2 | 35.1 |
+| board | + islands | **15.3** | **34.2** |
+
+The docs page server-renders 293 static islands. What still hydrates there is
+the `Section` and `Block` components of the article: a code block contains a
+copy button with state, so neither is static. Islands that contain interactive
+holes would remove that work (not implemented).
+
+Interactions after hydration (`bench.mjs --ssr`, median ms): typing into the
+search box costs about 1 ms more once (8.0 to 9.0), because it hydrates the
+sidebar's island, which was left dehydrated; hydration and search together
+still cost less (15.9 against 18.7). Toggling the theme and clicking copy
+buttons are unchanged (their islands receive no new props).
+
+`scripts/verify.mjs --ssr` passes for both island variants on every app (island
+comments are ignored in the comparison of DOM snapshots). With the flag forced
+on, the compiler fixture corpus evaluates identically except for fixtures that
+fail without it.
+
+Found while measuring: the server tracked the islands being rendered with a
+stack of objects, and Closure Compiler (production bundles) inlined the object
+pushed for an island and assumed its flag never changed, so every island was
+written as static. Tests run the sources, so they passed; the benchmark's
+button inside an island had no handler after hydration. The server now tracks
+the innermost island in two variables that it saves and restores.

@@ -777,7 +777,7 @@ impl FlowIndex {
 
 /// Rule C3: the function (including nested functions) calls no hook and does
 /// not call `use`.
-fn function_calls_hook(func: &HirFunction, env: &Environment) -> bool {
+pub(crate) fn function_calls_hook(func: &HirFunction, env: &Environment) -> bool {
     let flow = FlowIndex::build(func, env);
     for block in func.body.blocks.values() {
         for instr_id in &block.instructions {

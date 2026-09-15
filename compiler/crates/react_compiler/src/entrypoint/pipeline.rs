@@ -299,6 +299,34 @@ pub fn compile_fn(
         context.timing.stop();
     }
 
+    // Islands are wrapped before blocks are compiled, so that the content of
+    // an island is compiled into blocks too.
+    if env.config.enable_static_islands
+        && matches!(env.output_mode, OutputMode::Client | OutputMode::Ssr)
+        && context.react_runtime_module == "react/compiler-runtime"
+    {
+        context.timing.start("WrapStaticIslands");
+        let static_components = std::mem::take(&mut context.static_components);
+        let mut imports = RuntimeImports {
+            context: &mut *context,
+        };
+        react_compiler_optimization::static_islands::wrap_static_islands(
+            &mut hir,
+            &mut env,
+            &static_components,
+            &mut imports,
+        );
+        context.static_components = static_components;
+        context.timing.stop();
+
+        if context.debug_enabled {
+            context.timing.start("debug_print:WrapStaticIslands");
+            let debug_islands = debug_print::debug_hir(&hir, &env);
+            context.log_debug(DebugLogEntry::new("WrapStaticIslands", debug_islands));
+            context.timing.stop();
+        }
+    }
+
     if env.config.enable_jsx_blocks && env.output_mode == OutputMode::Client {
         context.timing.start("CompileJsxBlocks");
         react_compiler_optimization::compile_jsx_blocks(&mut hir, &mut env);
@@ -1833,6 +1861,23 @@ fn run_pipeline_passes(
 
     react_compiler_optimization::optimize_props_method_calls(hir, env);
 
+    if env.config.enable_static_islands
+        && matches!(env.output_mode, OutputMode::Client | OutputMode::Ssr)
+        && context.react_runtime_module == "react/compiler-runtime"
+    {
+        let static_components = std::mem::take(&mut context.static_components);
+        let mut imports = RuntimeImports {
+            context: &mut *context,
+        };
+        react_compiler_optimization::static_islands::wrap_static_islands(
+            hir,
+            env,
+            &static_components,
+            &mut imports,
+        );
+        context.static_components = static_components;
+    }
+
     if env.config.enable_jsx_blocks && env.output_mode == OutputMode::Client {
         react_compiler_optimization::compile_jsx_blocks(hir, env);
     }
@@ -2080,9 +2125,25 @@ struct RuntimeImports<'c> {
 
 impl RuntimeImports<'_> {
     fn binding(&mut self, specifier: &str) -> react_compiler_hir::NonLocalBinding {
+        self.binding_named(specifier, None)
+    }
+
+    fn binding_named(
+        &mut self,
+        specifier: &str,
+        name_hint: Option<&str>,
+    ) -> react_compiler_hir::NonLocalBinding {
         let module = self.context.react_runtime_module.clone();
-        let import = self.context.add_import_specifier(&module, specifier, None);
+        let import = self.context.add_import_specifier(&module, specifier, name_hint);
         react_compiler_hir::NonLocalBinding::ModuleLocal { name: import.name }
+    }
+}
+
+impl react_compiler_optimization::static_islands::StaticIslandImports for RuntimeImports<'_> {
+    fn static_island(&mut self) -> react_compiler_hir::NonLocalBinding {
+        // A JSX tag must be capitalized to be a reference rather than a host
+        // element name.
+        self.binding_named("unstable_StaticIsland", Some("StaticIsland"))
     }
 }
 

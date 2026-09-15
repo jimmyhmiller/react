@@ -1701,6 +1701,72 @@ fn collect_inline_candidates<'a>(
     candidates
 }
 
+/// Builds the set of static components of this module (see
+/// `react_compiler_optimization::static_islands`): components that call no
+/// hooks and only create elements that need no hydration, including elements
+/// of other static components, with the weight of what each renders. Starts
+/// from every module component and removes the components that are not static
+/// until the set does not change, then computes the weights.
+fn collect_static_components(
+    program: &Program,
+    scope: &ScopeInfo,
+    env_config: &EnvironmentConfig,
+) -> react_compiler_optimization::static_islands::StaticComponents {
+    use react_compiler_optimization::static_islands::{
+        is_static_component, static_component_weight,
+    };
+    let mut lowered: Vec<(String, react_compiler_hir::HirFunction, Environment)> = Vec::new();
+    for component in inline_candidates::find_module_components(program, scope) {
+        let mut scratch = Environment::with_config(env_config.clone());
+        scratch.fn_type = ReactFunctionType::Component;
+        if let Ok(hir) =
+            react_compiler_lowering::lower(&component.node, Some(&component.name), scope, &mut scratch)
+        {
+            if !scratch.has_errors() {
+                lowered.push((component.name, hir, scratch));
+            }
+        }
+    }
+    let mut static_components: react_compiler_optimization::static_islands::StaticComponents =
+        lowered.iter().map(|(name, _, _)| (name.clone(), 1)).collect();
+    loop {
+        let removed: Vec<String> = lowered
+            .iter()
+            .filter(|(name, hir, env)| {
+                static_components.contains_key(name)
+                    && !is_static_component(hir, env, &static_components)
+            })
+            .map(|(name, _, _)| name.clone())
+            .collect();
+        if removed.is_empty() {
+            break;
+        }
+        for name in removed {
+            static_components.remove(&name);
+        }
+    }
+    // Weights only increase, and are bounded, so this ends; a component's
+    // weight is final after as many rounds as the depth of the components it
+    // renders.
+    for _round in 0..=lowered.len() {
+        let mut changed = false;
+        for (name, hir, env) in &lowered {
+            let Some(current) = static_components.get(name).copied() else {
+                continue;
+            };
+            let weight = static_component_weight(hir, env, &static_components).max(current);
+            if weight != current {
+                static_components.insert(name.clone(), weight);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    static_components
+}
+
 /// Decides what each candidate returns in terms of blocks when compiled the
 /// way it is inlined: with the other candidates inlined into it. Inlining a
 /// child can turn a slot holding the child's element into host elements of the
@@ -4217,6 +4283,19 @@ pub fn compile_program(mut file: File, scope: ScopeInfo, options: PluginOptions)
     } else {
         InlineComponentCandidates::new()
     };
+
+    if env_config.enable_static_islands {
+        context.static_components = collect_static_components(program, &scope, &env_config);
+        if context.debug_enabled {
+            let mut names: Vec<String> = context
+                .static_components
+                .iter()
+                .map(|(name, weight)| format!("{name}: weight {weight}"))
+                .collect();
+            names.sort();
+            context.log_debug(DebugLogEntry::new("StaticComponents", names.join("\n")));
+        }
+    }
 
     // Process each function and collect compiled results
     let mut compiled_fns: Vec<CompiledFunction<'_>> = Vec::new();

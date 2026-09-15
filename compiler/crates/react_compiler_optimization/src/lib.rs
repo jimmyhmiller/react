@@ -15,6 +15,7 @@ pub mod outline_functions;
 pub mod outline_jsx;
 pub mod prune_maybe_throws;
 pub mod prune_unused_labels_hir;
+pub mod static_islands;
 
 pub use constant_propagation::constant_propagation;
 pub use dead_code_elimination::dead_code_elimination;

@@ -30,7 +30,7 @@ use react_compiler_hir::environment::Environment;
 use react_compiler_hir::visitors;
 use react_compiler_hir::{
     BlockId, FunctionId, HirFunction, IdentifierId, InstructionId, InstructionValue, JsxTag,
-    PlaceOrSpread, PropertyLiteral, Terminal,
+    NonLocalBinding, PlaceOrSpread, PropertyLiteral, Terminal,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -43,6 +43,9 @@ enum Use {
 
 pub(crate) struct Positions<'f> {
     func: &'f HirFunction,
+    /// The tags of static island elements (whose child is at a fixed
+    /// position).
+    island_tags: FxHashSet<IdentifierId>,
     uses: FxHashMap<IdentifierId, Vec<Use>>,
     /// The instruction whose lvalue is the identifier.
     defs: FxHashMap<IdentifierId, InstructionId>,
@@ -58,6 +61,7 @@ impl<'f> Positions<'f> {
     pub(crate) fn build(func: &'f HirFunction, env: &Environment, returns_rendered: bool) -> Self {
         let mut positions = Positions {
             func,
+            island_tags: FxHashSet::default(),
             uses: FxHashMap::default(),
             defs: FxHashMap::default(),
             stores: FxHashMap::default(),
@@ -80,6 +84,9 @@ impl<'f> Positions<'f> {
             for instr_id in &block.instructions {
                 let instr = &func.instructions[instr_id.0 as usize];
                 positions.defs.insert(instr.lvalue.identifier, *instr_id);
+                if env.is_static_island_tag(instr.lvalue.identifier) {
+                    positions.island_tags.insert(instr.lvalue.identifier);
+                }
                 if let InstructionValue::StoreLocal { lvalue, value, .. } = &instr.value {
                     positions
                         .stores
@@ -113,6 +120,39 @@ impl<'f> Positions<'f> {
             })
         };
         self.flows_to_positions(root, &mut FxHashSet::default(), &alternatives)
+    }
+
+    /// Whether the element of component `name` (a module binding) produced as
+    /// `root` is only rendered at positions where no other element of the same
+    /// component can be rendered.
+    pub(crate) fn is_exclusive_component(&self, root: IdentifierId, name: &str) -> bool {
+        let alternatives = |id: IdentifierId| {
+            self.leaves_are(id, root, &mut FxHashSet::default(), &|value| {
+                self.is_distinct_from_component(value, name)
+            })
+        };
+        self.flows_to_positions(root, &mut FxHashSet::default(), &alternatives)
+    }
+
+    fn is_distinct_from_component(&self, value: &InstructionValue, name: &str) -> bool {
+        match value {
+            InstructionValue::JsxExpression {
+                tag: JsxTag::Place(place),
+                ..
+            } => match self.defs.get(&place.identifier).map(|def| {
+                &self.func.instructions[def.0 as usize].value
+            }) {
+                // A component of the module or an island: a different type
+                // unless it is the same binding.
+                Some(InstructionValue::LoadGlobal {
+                    binding: NonLocalBinding::ModuleLocal { name: other },
+                    ..
+                }) => other != name,
+                _ => self.island_tags.contains(&place.identifier),
+            },
+            InstructionValue::JsxExpression { .. } | InstructionValue::JsxFragment { .. } => true,
+            other => is_primitive(other),
+        }
     }
 
     /// Whether the array produced as `root` by a `.map` call is only rendered
@@ -175,6 +215,14 @@ impl<'f> Positions<'f> {
                         !in_props
                     }
                     InstructionValue::JsxFragment { .. } => true,
+                    InstructionValue::JsxExpression {
+                        tag: JsxTag::Place(tag),
+                        children: Some(children),
+                        ..
+                    } if self.island_tags.contains(&tag.identifier) => {
+                        // An island's only child.
+                        children.len() == 1 && children[0].identifier == id
+                    }
                     InstructionValue::LoadLocal { place, .. } if place.identifier == id => {
                         self.flows_to_positions(instr.lvalue.identifier, visiting, alternatives_ok)
                     }

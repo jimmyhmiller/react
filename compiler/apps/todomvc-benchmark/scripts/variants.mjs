@@ -122,6 +122,30 @@ export const VARIANTS = [
       },
     },
   },
+  {
+    name: 'local/compiler-islands',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableStaticIslands: true,
+      },
+    },
+  },
+  {
+    name: 'local/compiler-all-islands',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableComponentInlining: true,
+        enableJsxBlocks: true,
+        enableListItemMemoization: true,
+        enableContextSelectors: true,
+        enableStaticIslands: true,
+      },
+    },
+  },
   {name: 'preact', framework: 'preact'},
   {name: 'solid', framework: 'solid'},
   {name: 'svelte', framework: 'svelte'},

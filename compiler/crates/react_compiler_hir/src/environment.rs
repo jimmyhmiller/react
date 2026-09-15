@@ -125,6 +125,9 @@ pub struct Environment {
     /// Nested functions whose every returned value is a block element (set by
     /// `CompileJsxBlocks`).
     block_functions: FxHashSet<FunctionId>,
+    /// Tags of the static island elements created by `WrapStaticIslands`: the
+    /// child of such an element is at a fixed position.
+    static_island_tags: FxHashSet<IdentifierId>,
     /// List item callbacks selected by `MemoizeListItems`, with the variable
     /// that holds each list's `unstable_useListItemMemoCache()` result.
     list_item_callbacks: FxHashMap<FunctionId, IdentifierId>,
@@ -234,6 +237,7 @@ impl Environment {
             block_slot_values: FxHashSet::default(),
             sliced_hook_callees: FxHashSet::default(),
             block_functions: FxHashSet::default(),
+            static_island_tags: FxHashSet::default(),
             list_item_callbacks: FxHashMap::default(),
             registers_context_hook: false,
             uid_known_names: None,
@@ -290,6 +294,7 @@ impl Environment {
             block_slot_values: FxHashSet::default(),
             sliced_hook_callees: FxHashSet::default(),
             block_functions: FxHashSet::default(),
+            static_island_tags: FxHashSet::default(),
             list_item_callbacks: FxHashMap::default(),
             registers_context_hook: false,
             uid_known_names: self.uid_known_names.clone(),
@@ -1091,6 +1096,14 @@ impl Environment {
 
     pub fn is_block_function(&self, func: FunctionId) -> bool {
         self.block_functions.contains(&func)
+    }
+
+    pub fn add_static_island_tag(&mut self, tag: IdentifierId) {
+        self.static_island_tags.insert(tag);
+    }
+
+    pub fn is_static_island_tag(&self, tag: IdentifierId) -> bool {
+        self.static_island_tags.contains(&tag)
     }
 
     /// Take the compiled block templates, leaving the vec empty.

@@ -321,13 +321,21 @@ describe('ReactDOM static islands', () => {
           <StaticIsland>
             <em>static</em>
           </StaticIsland>
+          <StaticIsland>
+            <s>before</s>
+            <StaticIsland>
+              <u>nested</u>
+            </StaticIsland>
+            <a onClick={() => {}}>after</a>
+          </StaticIsland>
         </div>
       );
     }
     const html = ReactDOMServer.renderToString(<Page />);
     expect(html).toBe(
       '<div>text<!-- --><button>press</button><b>0</b><i>legacy</i>' +
-        '<span>static</span><b>0</b><!--~--><em>static</em><!--/~--></div>',
+        '<span>static</span><b>0</b><!--~--><em>static</em><!--/~-->' +
+        '<s>before</s><!--~--><u>nested</u><!--/~--><a>after</a></div>',
     );
     const {container, errors} = await serverRenderAndHydrate(<Page />);
     expect(errors).toEqual([]);

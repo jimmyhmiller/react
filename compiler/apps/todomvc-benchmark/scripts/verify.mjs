@@ -109,9 +109,9 @@ async function snapshots(browser, variant, workload, ssr) {
 }
 
 // Serialized in the page. Attributes are sorted and adjacent text nodes are
-// merged, skipping empty ones. With `compareState`, inputs are serialized with
-// their value and checked properties instead of the corresponding attributes,
-// and comments are skipped.
+// merged, skipping empty ones. Static island comments are skipped. With
+// `compareState`, inputs are serialized with their value and checked
+// properties instead of the corresponding attributes, and comments are skipped.
 function canonicalHTML(root, compareState) {
   function escape(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -142,6 +142,14 @@ function canonicalHTML(root, compareState) {
     for (const child of node.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
         text += child.nodeValue;
+        continue;
+      }
+      if (
+        child.nodeType === Node.COMMENT_NODE &&
+        (child.nodeValue === '~' || child.nodeValue === '/~')
+      ) {
+        // The boundaries of dehydrated static islands (see
+        // compiler/docs/experiments/0005-static-islands.md).
         continue;
       }
       if (text !== '') {

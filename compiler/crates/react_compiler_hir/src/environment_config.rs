@@ -220,6 +220,15 @@ pub struct EnvironmentConfig {
     /// `compiler/docs/experiments/0004-update-slicing.md`.
     #[serde(default)]
     pub enable_update_slicing: bool,
+
+    /// Rust compiler only. Wrap JSX subtrees that look static in
+    /// `unstable_StaticIsland`, so that React leaves them dehydrated when the
+    /// server rendered them statically (requires a React build with
+    /// `enableStaticIslands` and the react/compiler-runtime module, target 19).
+    /// The server and the client must both be compiled with it. See
+    /// `compiler/docs/experiments/0005-static-islands.md`.
+    #[serde(default)]
+    pub enable_static_islands: bool,
 }
 
 impl Default for EnvironmentConfig {
@@ -268,6 +277,7 @@ impl Default for EnvironmentConfig {
             enable_list_item_memoization: false,
             enable_context_selectors: false,
             enable_update_slicing: false,
+            enable_static_islands: false,
             custom_macros: None,
         }
     }

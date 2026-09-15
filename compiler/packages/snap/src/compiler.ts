@@ -292,7 +292,7 @@ export async function transformFixtureInput(
   let evaluatorCode = null;
 
   // Output of these flags needs experimental React runtime APIs (compiled
-  // blocks, list item memo caches, context selectors) that the installed React
+  // blocks, list item memo caches, context selectors, static islands) that the installed React
   // does not have. It is evaluated only with a React build that has them
   // (SNAP_REACT_BUILD, see react-build-alias); the runtime behavior is also
   // tested in packages/react-dom and packages/react-reconciler.
@@ -305,6 +305,7 @@ export async function transformFixtureInput(
       'enableListItemMemoization',
       'enableContextSelectors',
       'enableUpdateSlicing',
+      'enableStaticIslands',
     ].some(
       flag => rustOnlyPragma[flag] === true || forcedRustFlags.includes(flag),
     );
