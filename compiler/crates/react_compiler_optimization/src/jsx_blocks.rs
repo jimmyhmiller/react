@@ -359,11 +359,6 @@ fn compile_blocks_in_function(
     let mut insertions: FxHashMap<InstructionId, Vec<Instruction>> = FxHashMap::default();
     for root_id in roots {
         let root_candidate = &candidates[&root_id];
-        // Hiding a suspended block root resets its `display` from props, which a
-        // block does not have, so the root may not carry a style.
-        if root_candidate.dynamic_props.iter().any(|(name, _)| name == "style") {
-            continue;
-        }
         let mut builder = TreeBuilder {
             func,
             uses: &uses,

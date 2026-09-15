@@ -317,3 +317,4 @@ export const getBlockInlineItemTemplate = $$$config.getBlockInlineItemTemplate;
 export const getBlockInlineItemRoot = $$$config.getBlockInlineItemRoot;
 export const adoptBlockInlineItem = $$$config.adoptBlockInlineItem;
 export const getBlockValues = $$$config.getBlockValues;
+export const getBlockRootHostProps = $$$config.getBlockRootHostProps;

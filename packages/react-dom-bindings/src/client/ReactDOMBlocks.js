@@ -55,6 +55,7 @@ import type {Fiber} from 'react-reconciler/src/ReactInternalTypes';
 
 import {REACT_ELEMENT_TYPE, REACT_LIST_CHANGES} from 'shared/ReactSymbols';
 import isArray from 'shared/isArray';
+import hasOwnProperty from 'shared/hasOwnProperty';
 
 import {
   setBlockProp,
@@ -124,6 +125,10 @@ type BlockAnalysis = {
   inputs: Array<Input>,
   eventHoles: Array<EventHole>,
   positionCount: number,
+  // The root element's `style`: the index of its hole, or -1 with the static
+  // value (undefined if it has none).
+  rootStyleHole: number,
+  rootStaticStyle: mixed,
 };
 
 export type BlockValues = $ReadOnlyArray<mixed>;
@@ -173,8 +178,26 @@ function getBlockAnalysis(template: BlockTemplate): BlockAnalysis {
     inputs: [],
     eventHoles: [],
     positionCount: 0,
+    rootStyleHole: -1,
+    rootStaticStyle: undefined,
   };
-  analyzeNode(analysis, template.description, []);
+  const rootNode = template.description;
+  const rootStaticProps = rootNode[1];
+  if (
+    rootStaticProps !== null &&
+    hasOwnProperty.call(rootStaticProps, 'style')
+  ) {
+    analysis.rootStaticStyle = rootStaticProps.style;
+  }
+  const rootDynamicProps = rootNode[2];
+  if (rootDynamicProps !== null) {
+    for (let i = 0; i < rootDynamicProps.length; i++) {
+      if (rootDynamicProps[i][0] === 'style') {
+        analysis.rootStyleHole = rootDynamicProps[i][1];
+      }
+    }
+  }
+  analyzeNode(analysis, rootNode, []);
   for (let i = 0; i < analysis.holes.length; i++) {
     if (analysis.holes[i] === undefined) {
       throw new Error(
@@ -895,6 +918,26 @@ export function adoptBlockInlineItem(
   item.ownedByFiber = true;
   precacheFiberNode(internalInstanceHandle, item.root);
   setBlockInstanceData(item.root, item);
+}
+
+const noRootHostProps: {+style?: mixed} = {};
+
+// The props of a block's root element that React reads in the commit phase
+// like the props of a host component (revealing a hidden instance restores
+// `style.display`, view transitions restore `style.viewTransitionName`): its
+// `style`, from the template or the block's values.
+export function getBlockRootHostProps(
+  template: BlockTemplate,
+  values: BlockValues,
+): {+style?: mixed} {
+  const analysis = getBlockAnalysis(template);
+  if (analysis.rootStyleHole !== -1) {
+    return {style: values[analysis.rootStyleHole]};
+  }
+  if (analysis.rootStaticStyle !== undefined) {
+    return {style: analysis.rootStaticStyle};
+  }
+  return noRootHostProps;
 }
 
 // The committed hole values of a block instance.

@@ -45,4 +45,5 @@ export const getBlockInlineItemTemplate = shim;
 export const getBlockInlineItemRoot = shim;
 export const adoptBlockInlineItem = shim;
 export const getBlockValues = shim;
+export const getBlockRootHostProps = shim;
 export type BlockInlineItem = mixed;

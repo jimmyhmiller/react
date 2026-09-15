@@ -45,6 +45,7 @@ import {
   replaceContainerChildren,
   hideDehydratedBoundary,
   hideInstance,
+  getBlockRootHostProps,
   hideTextInstance,
   unhideDehydratedBoundary,
   unhideInstance,
@@ -297,6 +298,14 @@ export function commitShowHideSuspenseBoundary(node: Fiber, isHidden: boolean) {
   }
 }
 
+// The props of a host instance that the commit phase reads after it was
+// rendered: a block's root element has no props of its own.
+export function getHostInstanceProps(fiber: Fiber): any {
+  return fiber.tag === HostBlock
+    ? getBlockRootHostProps(fiber.type, fiber.memoizedProps.v)
+    : fiber.memoizedProps;
+}
+
 export function commitShowHideHostInstance(node: Fiber, isHidden: boolean) {
   try {
     const instance = node.stateNode;
@@ -307,15 +316,11 @@ export function commitShowHideHostInstance(node: Fiber, isHidden: boolean) {
         hideInstance(instance);
       }
     } else {
+      const props = getHostInstanceProps(node);
       if (__DEV__) {
-        runWithFiberInDEV(
-          node,
-          unhideInstance,
-          node.stateNode,
-          node.memoizedProps,
-        );
+        runWithFiberInDEV(node, unhideInstance, node.stateNode, props);
       } else {
-        unhideInstance(node.stateNode, node.memoizedProps);
+        unhideInstance(node.stateNode, props);
       }
     }
   } catch (error) {

@@ -37,9 +37,10 @@
 //! A callback is selected only if:
 //! - it is an arrow function (no own `this` or `arguments`) that does not read
 //!   `arguments`, and is not async or a generator,
-//! - its value is rendered by a block slot and each of its items is a block
-//!   (see `CompileJsxBlocks`; items that need fibers get them individually),
-//!   or its value is only rendered, as the items of a fixed position (see
+//! - its value is rendered by a block slot and used nowhere else (see
+//!   `CompileJsxBlocks`; items that are blocks are rendered without fibers,
+//!   other items get fibers individually), or its value is only rendered, as
+//!   the items of a fixed position (see
 //!   `jsx_block_positions`), for example `<ul>{items.map(...)}</ul>`: an
 //!   unchanged item then returns the element of the previous render, and
 //!   React bails out of rendering it,
@@ -250,11 +251,11 @@ fn find_sites(func: &HirFunction, env: &Environment) -> Vec<Site> {
                 continue;
             };
             let callback = lowered_func.func;
-            // The list is rendered by a block slot and used nowhere else, with
-            // blocks as items, or it is only rendered.
+            // The list is rendered by a block slot and used nowhere else, or it
+            // is only rendered at a fixed position: either way its items are
+            // only rendered, whether they are blocks or other elements.
             let block_list = slot_values.contains(&instr.lvalue.identifier)
-                && uses(instr.lvalue.identifier) == 1
-                && env.is_block_function(callback);
+                && uses(instr.lvalue.identifier) == 1;
             if !(block_list || rendered_callbacks.contains(&callback))
                 || !seen.insert(callback)
                 || !is_memoizable(&env.functions[callback.0 as usize], env)

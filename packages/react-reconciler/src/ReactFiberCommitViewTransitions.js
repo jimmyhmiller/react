@@ -45,6 +45,7 @@ import {
   getViewTransitionClassName,
 } from './ReactFiberViewTransitionComponent';
 import {trackAnimatingTask} from './ReactProfilerTimer';
+import {getHostInstanceProps} from './ReactFiberCommitHostEffects';
 import {
   enableComponentPerformanceTrack,
   enableProfilerTimer,
@@ -252,7 +253,7 @@ function restoreViewTransitionOnHostInstances(
   while (child !== null) {
     if (child.tag === HostComponent || child.tag === HostBlock) {
       const instance: Instance = child.stateNode;
-      restoreViewTransitionName(instance, child.memoizedProps);
+      restoreViewTransitionName(instance, getHostInstanceProps(child));
     } else if (
       child.tag === OffscreenComponent &&
       child.memoizedState !== null

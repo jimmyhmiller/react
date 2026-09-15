@@ -214,8 +214,11 @@ template:
    numbers (template literals, arithmetic, `typeof`, unary `+`/`-`/`~`) become
    text holes; everything else becomes a slot.
 7. A tree must contain at least two elements. The root may have a `key` (moved
-   onto the block element) but no `style` (hiding and revealing resets the
-   root's `display` from props, which a block does not carry).
+   onto the block element) and a `style`: where the commit phase reads a host
+   component's props after rendering (revealing a hidden instance restores
+   `style.display`, view transitions restore `style.viewTransitionName`), it
+   reads a block's root style from its template or values
+   (`getBlockRootHostProps`).
 8. The root must be at an *exclusive position* (`jsx_block_positions.rs`). A
    block has a different type than the host element it replaces, and React
    keeps a host instance only when the element at the same position has the

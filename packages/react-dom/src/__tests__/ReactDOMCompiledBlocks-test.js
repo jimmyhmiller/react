@@ -444,6 +444,76 @@ describe('ReactDOMCompiledBlocks', () => {
     );
   });
 
+  // @gate enableCompiledBlocks
+  it('restores the root style of a block when revealing it', async () => {
+    // <div style={style}>{children}</div>, and the same with a static style.
+    const dynamicTemplate = ReactDOM.unstable_createBlockTemplate([
+      'div',
+      null,
+      [['style', 0]],
+      [{s: 1}],
+    ]);
+    const staticTemplate = ReactDOM.unstable_createBlockTemplate([
+      'section',
+      {style: {display: 'grid'}},
+      null,
+      [{s: 0}],
+    ]);
+    let resolve;
+    const promise = new Promise(r => {
+      resolve = r;
+    });
+    let resolved = false;
+    promise.then(() => {
+      resolved = true;
+    });
+    function Suspender({shouldSuspend}) {
+      if (shouldSuspend && !resolved) {
+        throw promise;
+      }
+      return 'content';
+    }
+    const style = {display: 'flex', color: 'red'};
+    function BlockApp({shouldSuspend}) {
+      return (
+        <React.Suspense fallback={<span>loading</span>}>
+          {block(dynamicTemplate, [
+            style,
+            <Suspender shouldSuspend={shouldSuspend} />,
+          ])}
+          {block(staticTemplate, [<Suspender shouldSuspend={shouldSuspend} />])}
+        </React.Suspense>
+      );
+    }
+    function JsxApp({shouldSuspend}) {
+      return (
+        <React.Suspense fallback={<span>loading</span>}>
+          <div style={style}>
+            <Suspender shouldSuspend={shouldSuspend} />
+          </div>
+          <section style={{display: 'grid'}}>
+            <Suspender shouldSuspend={shouldSuspend} />
+          </section>
+        </React.Suspense>
+      );
+    }
+    await renderBoth(
+      <BlockApp shouldSuspend={false} />,
+      <JsxApp shouldSuspend={false} />,
+    );
+    await renderBoth(
+      <BlockApp shouldSuspend={true} />,
+      <JsxApp shouldSuspend={true} />,
+    );
+    expect(blockContainer.innerHTML).toContain('display: none');
+    await act(() => resolve());
+    expect(blockContainer.innerHTML).toBe(jsxContainer.innerHTML);
+    expect(blockContainer.innerHTML).toBe(
+      '<div style="display: flex; color: red;">content</div>' +
+        '<section style="display: grid;">content</section>',
+    );
+  });
+
   function countFibers(container) {
     const key = Object.keys(container).find(k =>
       k.startsWith('__reactContainer$'),

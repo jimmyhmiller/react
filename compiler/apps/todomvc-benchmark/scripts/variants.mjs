@@ -95,6 +95,19 @@ export const VARIANTS = [
       },
     },
   },
+  {
+    name: 'local/compiler-all',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableComponentInlining: true,
+        enableJsxBlocks: true,
+        enableListItemMemoization: true,
+        enableContextSelectors: true,
+      },
+    },
+  },
   {name: 'preact', framework: 'preact'},
   {name: 'solid', framework: 'solid'},
   {name: 'svelte', framework: 'svelte'},

@@ -7062,6 +7062,7 @@ export {
   getBlockInlineItemRoot,
   adoptBlockInlineItem,
   getBlockValues,
+  getBlockRootHostProps,
 } from './ReactDOMBlocks';
 export type {BlockInlineItem} from './ReactDOMBlocks';
 
