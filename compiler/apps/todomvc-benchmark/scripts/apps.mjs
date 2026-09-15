@@ -47,6 +47,14 @@ export const APPS = [
     entry: 'board/zustand-main.jsx',
     css: 'src/board/board.css',
   },
+  // A documentation page: mostly static content with a few interactive parts,
+  // for server rendering and hydration.
+  {
+    name: 'docs',
+    source: 'docs/DocsApp.jsx',
+    entry: 'docs/docs-main.jsx',
+    css: 'src/docs/docs.css',
+  },
   {
     name: 'board-redux',
     source: 'board/ReduxBoardApp.jsx',

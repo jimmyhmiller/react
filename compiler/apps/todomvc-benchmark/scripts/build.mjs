@@ -311,11 +311,17 @@ async function buildReactVariant(variant, app, outDir) {
 }
 
 // The root of a server-rendered page, on the server and the client: marks the
-// document once the app is hydrated (effects run after hydration commits), so
-// that verify.mjs and bench.mjs wait for hydration.
-const SSR_ROOT = `import {useEffect} from 'react';
+// document once the app is hydrated, so that verify.mjs and bench.mjs wait for
+// hydration, and records the time from hydrateRoot to the hydration's commit
+// (window.__hydrationTime, see hydration.mjs).
+const SSR_ROOT = `import {useLayoutEffect} from 'react';
 function Root() {
-  useEffect(() => { document.body.setAttribute('data-hydrated', ''); }, []);
+  useLayoutEffect(() => {
+    if (typeof window.__hydrationStart === 'number') {
+      window.__hydrationTime = performance.now() - window.__hydrationStart;
+    }
+    document.body.setAttribute('data-hydrated', '');
+  }, []);
   return <App />;
 }`;
 
@@ -353,7 +359,7 @@ async function buildServerRenderedPage(variant, app, outDir, compiledPath, optio
   await esbuild.build({
     ...shared,
     stdin: {
-      contents: `import {hydrateRoot} from 'react-dom/client';\nimport App from '${appImport}';\n${SSR_ROOT}\nhydrateRoot(document.getElementById('root'), <Root />, {onRecoverableError(error) { console.error('Recoverable error: ' + error.message); }});\n`,
+      contents: `import {hydrateRoot} from 'react-dom/client';\nimport App from '${appImport}';\n${SSR_ROOT}\nwindow.__hydrationStart = performance.now();\nhydrateRoot(document.getElementById('root'), <Root />, {onRecoverableError(error) { console.error('Recoverable error: ' + error.message); }});\n`,
       resolveDir: path.dirname(compiledPath),
       sourcefile: 'hydrate-entry.jsx',
       loader: 'jsx',

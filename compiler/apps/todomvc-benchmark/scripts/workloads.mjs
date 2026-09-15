@@ -76,6 +76,7 @@ export const APP_PAGES = {
   'board-context': {ready: '.card', root: '.board-app'},
   'board-zustand': {ready: '.card', root: '.board-app'},
   'board-redux': {ready: '.card', root: '.board-app'},
+  docs: {ready: '.docs-footer', root: '.docs-app'},
 };
 
 export const WORKLOADS = [
@@ -428,4 +429,43 @@ export const WORKLOADS = [
       ],
     },
   ]),
+  {
+    app: 'docs',
+    name: 'docs/search',
+    description: 'type a 6-character search into the sidebar filter, then delete it',
+    setup: '',
+    steps: [
+      {
+        name: 'search-type-delete',
+        run: `const input = document.querySelector('.search'); const text = 'render'; for (let i = 1; i <= text.length; i++) { await __bench.setInputValue(input, text.slice(0, i)); } for (let i = text.length - 1; i >= 0; i--) { await __bench.setInputValue(input, text.slice(0, i)); }`,
+        verify: `__bench.assert(__bench.count('.sidebar li') === 150, 'expected every page');`,
+      },
+    ],
+  },
+  {
+    app: 'docs',
+    name: 'docs/theme',
+    description: 'toggle the theme 10 times',
+    setup: '',
+    steps: [
+      {
+        name: 'theme-x10',
+        run: `const button = document.querySelector('.theme-toggle'); for (let i = 0; i < 10; i++) { await __bench.click(button); }`,
+        verify: `__bench.assert(__bench.count('.theme-light') === 1, 'expected the light theme');`,
+      },
+    ],
+  },
+  {
+    app: 'docs',
+    name: 'docs/copy',
+    description: 'click 20 copy buttons and the feedback widget',
+    setup: '',
+    steps: [
+      {
+        name: 'copy-x20-feedback',
+        run: `const buttons = document.querySelectorAll('.copy'); for (let i = 0; i < 20; i++) { await __bench.click(buttons[i]); } await __bench.click(document.querySelector('.feedback .yes'));`,
+        verify: `__bench.assert(__bench.count('.copy.copied') === 20, 'expected 20 copied buttons');`,
+      },
+    ],
+  },
 ];
