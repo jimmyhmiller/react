@@ -38,7 +38,10 @@ const rustPluginPath = path.join(
 );
 
 function compileApp(variant, app) {
-  const filename = path.join(ROOT, 'src', app.source);
+  return compileModule(variant, path.join(ROOT, 'src', app.source));
+}
+
+function compileModule(variant, filename) {
   const source = fs.readFileSync(filename, 'utf8');
   const events = [];
   const plugins = [];
@@ -252,6 +255,25 @@ async function buildReactVariant(variant, app, outDir) {
       ? frameworkBuildOptions(variant)
       : {alias: reactAliases(variant), plugins: [], define: {}};
   const {code, compiledFunctions} = compileApp(reactVariant, app);
+  // The app's other modules (like its stores) are compiled like the app, as
+  // the compiler runs on every module of an app.
+  const modulePaths = new Set(
+    (app.modules ?? []).map(module => path.join(ROOT, 'src', module)),
+  );
+  const compiledModules = {
+    name: 'compiled-modules',
+    setup(build) {
+      build.onLoad({filter: /\.jsx?$/}, args => {
+        if (!modulePaths.has(args.path)) {
+          return undefined;
+        }
+        return {
+          contents: compileModule(reactVariant, args.path).code,
+          loader: 'js',
+        };
+      });
+    },
+  };
   const compiledPath = path.join(
     ROOT,
     'src',
@@ -268,7 +290,7 @@ async function buildReactVariant(variant, app, outDir) {
       define: {'process.env.NODE_ENV': '"production"', ...options.define},
       nodePaths: [path.join(ROOT, 'node_modules')],
       alias: options.alias,
-      plugins: options.plugins,
+      plugins: [compiledModules, ...options.plugins],
       outfile: path.join(outDir, 'bundle.js'),
       logLevel: 'error',
     });

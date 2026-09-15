@@ -403,7 +403,7 @@ function useContext<T>(context: ReactContext<T>): T {
   return readContextImpl(context);
 }
 
-function startSelectedHook(): void {}
+function startSelectedHook(kind: 1 | 2): void {}
 
 function selectHookResult<T>(
   value: T,

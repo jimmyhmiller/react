@@ -6,7 +6,7 @@
  */
 
 import type * as BabelCore from '@babel/core';
-import {hasReactLikeFunctions} from './prefilter';
+import {hasReactLikeFunctions, importsStoreHookLibrary} from './prefilter';
 import {compileWithRust, type BindingRenameInfo} from './bridge';
 import {extractScopeInfo} from './scope';
 import {resolveOptions, type PluginOptions} from './options';
@@ -44,7 +44,14 @@ export default function BabelPluginReactCompilerRust(
 
           // Step 3: Pre-filter — any potential React functions?
           // Skip prefilter when compilationMode is 'all' (compiles all functions)
-          if (opts.compilationMode !== 'all' && !hasReactLikeFunctions(prog)) {
+          if (
+            opts.compilationMode !== 'all' &&
+            !hasReactLikeFunctions(prog) &&
+            !(
+              opts.environment.enableContextSelectors === true &&
+              importsStoreHookLibrary(prog)
+            )
+          ) {
             return;
           }
 

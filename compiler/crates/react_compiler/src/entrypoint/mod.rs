@@ -6,6 +6,7 @@ pub mod inline_candidates;
 pub mod pipeline;
 pub mod plugin_options;
 pub mod program;
+pub mod store_hooks;
 pub mod suppression;
 pub mod validate_source_locations;
 

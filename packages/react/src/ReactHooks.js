@@ -83,8 +83,8 @@ export function useContextWithSelector<T>(
   return dispatcher.unstable_useContextWithSelector(Context, changed, argument);
 }
 
-export function startSelectedHook(): void {
-  resolveDispatcher().unstable_startSelectedHook();
+export function startSelectedHook(kind: 1 | 2): void {
+  resolveDispatcher().unstable_startSelectedHook(kind);
 }
 
 export function selectHookResult<T>(

@@ -41,7 +41,7 @@ function Card(t0) {
   let t1;
   if ($[0] !== card.id) {
     t1 = [
-      [0, "starred", card.id],
+      [1, true, "starred", card.id],
       [1, card.id, "selectedId"],
     ];
     $[0] = card.id;

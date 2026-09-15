@@ -31,11 +31,11 @@
 //! without a render). A value read through a path is followed through local
 //! variables, destructuring and property loads. Any other use of a value (a
 //! call argument, a JSX attribute, a return, a method call, a phi) selects the
-//! whole value at that path; a use of the context value itself makes the read
-//! unselected. Computed keys and comparison operands must have the same value
-//! when the context is read: they are values computed before the read, or
-//! property reads of parameters (props are frozen), which are re-evaluated
-//! before the read.
+//! whole value at that path; such a use of the context value itself makes the
+//! read unselected. Computed keys and comparison operands must have the same
+//! value when the context is read: they are constants, values computed before
+//! the read, or property reads of parameters (props are frozen), which are
+//! re-evaluated before the read.
 //!
 //! Custom hooks. A read `const v = useX(...)` of a custom hook is selected the
 //! same way, through `unstable_startSelectedHook(useX)` and
@@ -46,6 +46,14 @@
 //! pass verifies that it returns the value of its one `useContext` call for
 //! every value of the context (or throws): its only hook call is `useContext`
 //! and every `return` returns that value.
+//!
+//! The same call is selected for hooks of external stores (like Zustand's
+//! `create` hooks and React Redux's `useSelector`), which return a selection
+//! of the store's state: React applies the description if the hook is
+//! registered as a store hook (see `store_hooks` in the react_compiler crate)
+//! and the call read exactly one `useSyncExternalStore` and returned its
+//! snapshot. `const selectedId = useStore(s => s.selectedId); selectedId ===
+//! id` is described as `[[1, id]]`.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -335,6 +343,8 @@ enum Expr {
     /// An identifier whose value is available at the read.
     Available(IdentifierId),
     Property(Box<Expr>, PropertyLiteral),
+    /// A constant, which has the same value wherever it is evaluated.
+    Primitive(PrimitiveValue),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -385,6 +395,9 @@ fn available(
     let &(def, block) = index.defs.get(&id)?;
     let site_order = func.instructions[site.instruction.0 as usize].id;
     let instr = &func.instructions[def.0 as usize];
+    if let InstructionValue::Primitive { value, .. } = &instr.value {
+        return Some(Expr::Primitive(value.clone()));
+    }
     if instr.id < site_order && index.unconditional.contains(&block) {
         return Some(Expr::Available(id));
     }
@@ -413,6 +426,7 @@ fn is_frozen_root(func: &HirFunction, index: &FunctionIndex, expr: &Expr) -> boo
     let mut id = match expr {
         Expr::Available(id) => *id,
         Expr::Property(object, _) => return is_frozen_root(func, index, object),
+        Expr::Primitive(_) => return false,
     };
     for _ in 0..16 {
         if index.params.contains(&id) {
@@ -577,7 +591,7 @@ fn analyze(
                     left,
                     right,
                     ..
-                } if !path.is_empty() && (left.identifier == id) != (right.identifier == id) => {
+                } if (left.identifier == id) != (right.identifier == id) => {
                     let other = if left.identifier == id { right } else { left };
                     match available(func, index, site, owner, other.identifier, 0) {
                         Some(operand) => {
@@ -654,6 +668,7 @@ fn expr_depends_on(expr: &Expr, paths: &FxHashMap<IdentifierId, Vec<Key>>) -> bo
     match expr {
         Expr::Available(id) => paths.contains_key(id),
         Expr::Property(object, _) => expr_depends_on(object, paths),
+        Expr::Primitive(_) => false,
     }
 }
 
@@ -694,6 +709,7 @@ fn materialize(
             reactive: false,
             loc: None,
         },
+        Expr::Primitive(value) => primitive(func, env, instructions, value.clone()),
         Expr::Property(object, property) => {
             let object = materialize(func, env, instructions, object);
             let place = temporary(env, Type::Poly);

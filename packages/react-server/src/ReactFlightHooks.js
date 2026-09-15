@@ -72,7 +72,7 @@ export const HooksDispatcher: Dispatcher = {
   },
   useContext: unsupportedContext as any,
   unstable_useContextWithSelector: unsupportedContext as any,
-  unstable_startSelectedHook(): void {},
+  unstable_startSelectedHook(kind: 1 | 2): void {},
   unstable_selectHookResult<T>(value: T): T {
     return value;
   },

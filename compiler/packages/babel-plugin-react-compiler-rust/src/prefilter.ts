@@ -154,3 +154,19 @@ function inferFunctionName(
   }
   return null;
 }
+
+/**
+ * The modules whose store hooks the compiler registers with
+ * `enableContextSelectors` (see `store_hooks.rs` in the react_compiler
+ * crate). A module that only defines stores has no React functions, but
+ * still registers its hooks.
+ */
+const STORE_HOOK_MODULES = new Set(['react-redux', 'zustand', 'zustand/react']);
+
+export function importsStoreHookLibrary(program: NodePath<t.Program>): boolean {
+  return program.node.body.some(
+    statement =>
+      statement.type === 'ImportDeclaration' &&
+      STORE_HOOK_MODULES.has(statement.source.value),
+  );
+}

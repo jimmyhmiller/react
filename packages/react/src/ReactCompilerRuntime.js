@@ -124,41 +124,63 @@ export function unstable_registerContextHook(hook: Function): void {
   }
 }
 
+// Hooks of external store libraries that return the snapshot of the one
+// useSyncExternalStore they call, for every snapshot (like the hooks returned
+// by Zustand's `create`, or React Redux's `useSelector`), registered by
+// compiled modules that define or import them.
+const storeHooks: WeakSet<Function> = new WeakSet();
+
+export function unstable_registerStoreHook(hook: Function): void {
+  if (enableContextSelectors) {
+    storeHooks.add(hook);
+  }
+}
+
 // `const started = unstable_startSelectedHook(useX); const value = useX(...);
 // unstable_selectHookPaths(started, value, useX, paths)` behaves like
-// `const value = useX(...)`, but if `useX` is a registered context hook, the
-// component only renders for a change of that context if the selected values
-// change (see unstable_useContextPaths). React checks that the call read
-// exactly one context, called no other hook and returned the context value.
-export function unstable_startSelectedHook(hook: Function): boolean {
+// `const value = useX(...)`, but:
+// - if `useX` is a registered context hook, the component only renders for a
+//   change of that context if the selected values change (see
+//   unstable_useContextPaths). React checks that the call read exactly one
+//   context, called no other hook and returned the context value.
+// - if `useX` is a registered store hook, the component only renders for a
+//   change of the store if the selected values of the snapshot change. React
+//   checks that the call read exactly one store and returned its snapshot.
+export function unstable_startSelectedHook(hook: Function): 0 | 1 | 2 {
   if (!enableContextSelectors) {
     throw new Error(
       'Context selectors are not enabled in this build of React.',
     );
   }
   if (contextHooks.has(hook)) {
-    startSelectedHook();
-    return true;
+    startSelectedHook(1);
+    return 1;
   }
-  return false;
+  if (storeHooks.has(hook)) {
+    startSelectedHook(2);
+    return 2;
+  }
+  return 0;
 }
 
 export function unstable_selectHookPaths<T>(
-  started: boolean,
+  started: 0 | 1 | 2,
   value: T,
   hook: Function,
   paths: SelectedPaths,
 ): T {
-  return started ? selectHookResult(value, pathsChanged as any, paths) : value;
+  return started !== 0
+    ? selectHookResult(value, pathsChanged as any, paths)
+    : value;
 }
 
 export function unstable_selectHookResult<T>(
-  started: boolean,
+  started: 0 | 1 | 2,
   value: T,
   hook: Function,
   select: (value: T) => Array<mixed>,
 ): T {
-  return started
+  return started !== 0
     ? selectHookResult(value, selectorChanged as any, select)
     : value;
 }

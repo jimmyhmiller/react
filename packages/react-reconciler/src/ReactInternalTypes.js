@@ -415,7 +415,7 @@ export type Dispatcher = {
     changed: (previous: T, next: T, argument: mixed) => boolean,
     argument: mixed,
   ): T,
-  unstable_startSelectedHook(): void,
+  unstable_startSelectedHook(kind: 1 | 2): void,
   unstable_selectHookResult<T>(
     value: T,
     changed: (previous: T, next: T, argument: mixed) => boolean,

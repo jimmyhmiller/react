@@ -316,7 +316,7 @@ fn is_valid_identifier(s: &str) -> bool {
 // -----------------------------------------------------------------------
 
 /// Check if a string follows the React hook naming convention (use[A-Z0-9]...).
-fn is_hook_name(s: &str) -> bool {
+pub(super) fn is_hook_name(s: &str) -> bool {
     let bytes = s.as_bytes();
     bytes.len() >= 4
         && bytes[0] == b'u'
@@ -4326,6 +4326,25 @@ pub fn compile_program(mut file: File, scope: ScopeInfo, options: PluginOptions)
         .collect();
     // Drop queue (and its borrows from file.program)
     drop(queue);
+
+    // Store hooks are registered by the modules that import or define them,
+    // which may not compile any function (see store_hooks).
+    let registered_store_hooks = env_config.enable_context_selectors
+        && output_mode == CompilerOutputMode::Client
+        && context.react_runtime_module == "react/compiler-runtime"
+        && super::store_hooks::register_store_hooks(&mut file.program, &mut context);
+
+    if replacements.is_empty() && registered_store_hooks {
+        add_imports_to_program(&mut file.program, &context);
+        let timing_entries = context.timing.into_entries();
+        return CompileResult::Success {
+            ast: Some(file),
+            events: context.events,
+            ordered_log: context.ordered_log,
+            renames: convert_renames(&context.renames),
+            timing: timing_entries,
+        };
+    }
 
     if replacements.is_empty() {
         // No functions to replace. Return renames for the Babel plugin to apply

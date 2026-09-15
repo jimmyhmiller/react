@@ -44,6 +44,7 @@ import {
   enableNoCloningMemoCache,
   enableViewTransition,
   enableGestureTransition,
+  enableContextSelectors,
 } from 'shared/ReactFeatureFlags';
 import {
   REACT_CONTEXT_TYPE,
@@ -239,6 +240,12 @@ export type Effect = {
 type StoreInstance<T> = {
   value: T,
   getSnapshot: () => T,
+  // A comparison of the snapshot the component rendered with and a new
+  // snapshot, called when the store changes, set by selectHookResult for a
+  // selected store hook (enableContextSelectors). The component only renders
+  // for a store change if it returns true.
+  changed: null | ((previous: T, next: T, argument: mixed) => boolean),
+  changedArgument: mixed,
 };
 
 type StoreConsistencyCheck<T> = {
@@ -942,6 +949,13 @@ export function resetHooksAfterThrow(): void {
   // It should only reset things like the current dispatcher, to prevent hooks
   // from being called outside of a component.
   currentlyRenderingFiber = null as any;
+  // A selected hook call that threw is not selected (see startSelectedHook).
+  selectedHookKind = 0;
+  selectedHookFiber = null;
+  selectedHookHook = null;
+  selectedHookDependency = null;
+  selectedStoreInstance = null;
+  selectedStoreSnapshot = null;
 
   // We can assume the previous dispatcher is always this one, since we set it
   // at the beginning of the render phase and there's no re-entrance.
@@ -1722,8 +1736,13 @@ function mountSyncExternalStore<T>(
   const inst: StoreInstance<T> = {
     value: nextSnapshot,
     getSnapshot,
+    changed: null,
+    changedArgument: null,
   };
   hook.queue = inst;
+  if (enableContextSelectors && selectedHookFiber === fiber) {
+    recordSelectedStore(inst, nextSnapshot, true);
+  }
 
   // Schedule an effect to subscribe to the store.
   mountEffect(subscribeToStore.bind(null, fiber, inst, subscribe), [subscribe]);
@@ -1786,6 +1805,9 @@ function updateSyncExternalStore<T>(
     markWorkInProgressReceivedUpdate();
   }
   const inst = hook.queue;
+  if (enableContextSelectors && selectedHookFiber === fiber) {
+    recordSelectedStore(inst, nextSnapshot, false);
+  }
 
   updateEffect(subscribeToStore.bind(null, fiber, inst, subscribe), [
     subscribe,
@@ -1897,7 +1919,11 @@ function subscribeToStore<T>(
   const handleStoreChange = () => {
     // The store changed. Check if the snapshot changed since the last time we
     // read from the store.
-    if (checkIfSnapshotChanged(inst)) {
+    if (
+      enableContextSelectors && inst.changed !== null
+        ? checkIfSelectedSnapshotChanged(inst)
+        : checkIfSnapshotChanged(inst)
+    ) {
       // Force a re-render.
       startUpdateTimerByLane(SyncLane, 'updateSyncExternalStore()', fiber);
       forceStoreRerender(fiber);
@@ -1916,6 +1942,34 @@ function checkIfSnapshotChanged<T>(inst: StoreInstance<T>): boolean {
   } catch (error) {
     return true;
   }
+}
+
+// Like checkIfSnapshotChanged, but a new snapshot only counts as a change if
+// the component's selection of it changed. Only used when the store notifies
+// the component: the checks before and after a commit compare snapshots, which
+// at worst renders the component again.
+function checkIfSelectedSnapshotChanged<T>(inst: StoreInstance<T>): boolean {
+  const changed = inst.changed;
+  const latestGetSnapshot = inst.getSnapshot;
+  const prevValue = inst.value;
+  try {
+    const nextValue = latestGetSnapshot();
+    return (
+      !is(prevValue, nextValue) &&
+      (changed === null || changed(prevValue, nextValue, inst.changedArgument))
+    );
+  } catch (error) {
+    return true;
+  }
+}
+
+function updateStoreSelection<T>(
+  inst: StoreInstance<T>,
+  changed: null | ((previous: T, next: T, argument: mixed) => boolean),
+  argument: mixed,
+): void {
+  inst.changed = changed;
+  inst.changedArgument = argument;
 }
 
 function forceStoreRerender(fiber: Fiber) {
@@ -3904,48 +3958,116 @@ function markUpdateInDevTools<A>(fiber: Fiber, lane: Lane, action: A): void {
 }
 
 // A call of a custom hook whose returned value is selected (see
-// unstable_useHookWithSelector in react/compiler-runtime) starts by recording
-// the hooks and context dependencies of the rendering component. A registered
-// context hook only reads a context, so these calls do not nest.
+// unstable_startSelectedHook in react/compiler-runtime) starts by recording
+// the hooks and context dependencies of the rendering component. Registered
+// context and store hooks do not call selected hooks, so these calls do not
+// nest (a nested call would only make the outer call unselected).
+const SelectedContextHook = 1;
+const SelectedStoreHook = 2;
+let selectedHookKind: 0 | 1 | 2 = 0;
 let selectedHookFiber: Fiber | null = null;
 let selectedHookHook: Hook | null = null;
 let selectedHookDependency: ContextDependency<mixed> | null = null;
+// The external stores read by a selected store hook call.
+let selectedStoreCount: number = 0;
+let selectedStoreInstance: StoreInstance<any> | null = null;
+let selectedStoreSnapshot: mixed = null;
+let selectedStoreMounted: boolean = false;
 
-function startSelectedHook(): void {
+function startSelectedHook(kind: 1 | 2): void {
+  selectedHookKind = kind;
   selectedHookFiber = currentlyRenderingFiber;
   selectedHookHook = workInProgressHook;
   selectedHookDependency = getLastContextDependency();
+  selectedStoreCount = 0;
+  selectedStoreInstance = null;
+  selectedStoreSnapshot = null;
 }
 
-// If the hook call since startSelectedHook read exactly one context, called no
-// other hooks, and returned the context value, then the component's render
-// only depends on what `changed` compares (the compiler verified that the hook
-// returns the value it reads for every value): the comparison is attached to
-// the context dependency. Otherwise nothing changes.
+function recordSelectedStore<T>(
+  inst: StoreInstance<T>,
+  snapshot: T,
+  mounted: boolean,
+): void {
+  selectedStoreCount++;
+  selectedStoreInstance = inst;
+  selectedStoreSnapshot = snapshot;
+  selectedStoreMounted = mounted;
+}
+
+// Context hooks: if the hook call since startSelectedHook read exactly one
+// context, called no other hooks, and returned the context value, then the
+// component's render only depends on what `changed` compares (the compiler
+// verified that the hook returns the value it reads for every value): the
+// comparison is attached to the context dependency.
+//
+// Store hooks (hooks of external store libraries that return the snapshot of
+// the one useSyncExternalStore they call, for every snapshot): if the call
+// read exactly one store and returned its snapshot, the comparison is used
+// when the store notifies the component. It is committed with the render, as
+// the store instance is shared by renders.
+//
+// Otherwise nothing changes.
 function selectHookResult<T>(
   value: T,
   changed: (previous: T, next: T, argument: mixed) => boolean,
   argument: mixed,
 ): T {
+  const kind = selectedHookKind;
   const fiber = selectedHookFiber;
   const previousDependency = selectedHookDependency;
   const hook = selectedHookHook;
+  const storeCount = selectedStoreCount;
+  const inst = selectedStoreInstance;
+  const snapshot = selectedStoreSnapshot;
+  selectedHookKind = 0;
   selectedHookFiber = null;
   selectedHookHook = null;
   selectedHookDependency = null;
-  if (fiber !== currentlyRenderingFiber || hook !== workInProgressHook) {
+  selectedStoreCount = 0;
+  selectedStoreInstance = null;
+  selectedStoreSnapshot = null;
+  if (fiber !== currentlyRenderingFiber) {
     return value;
   }
-  const dependency = getLastContextDependency();
-  if (
-    dependency !== null &&
-    dependency !== previousDependency &&
-    getNextContextDependency(currentlyRenderingFiber, previousDependency) ===
-      dependency &&
-    dependency.changed == null &&
-    is(dependency.memoizedValue, value)
-  ) {
-    setContextDependencySelector(dependency, changed as any, argument);
+  if (kind === SelectedContextHook) {
+    if (hook !== workInProgressHook) {
+      return value;
+    }
+    const dependency = getLastContextDependency();
+    if (
+      dependency !== null &&
+      dependency !== previousDependency &&
+      getNextContextDependency(currentlyRenderingFiber, previousDependency) ===
+        dependency &&
+      dependency.changed == null &&
+      is(dependency.memoizedValue, value)
+    ) {
+      setContextDependencySelector(dependency, changed as any, argument);
+    }
+  } else if (kind === SelectedStoreHook && storeCount === 1 && inst !== null) {
+    // If the hook returned another value, a selection committed by an
+    // earlier render is reset. (A hook calls the same hooks in every render,
+    // so a call that read another number of stores never selected one.)
+    const selected = is(snapshot, value);
+    const nextChanged = selected ? changed : null;
+    const nextArgument = selected ? argument : null;
+    if (selectedStoreMounted) {
+      // The instance was created by this render.
+      inst.changed = nextChanged as any;
+      inst.changedArgument = nextArgument;
+    } else if (
+      inst.changed !== nextChanged ||
+      inst.changedArgument !== nextArgument
+    ) {
+      currentlyRenderingFiber.flags |= PassiveEffect;
+      pushSimpleEffect(
+        HookHasEffect | HookPassive,
+        createEffectInstance(),
+        updateStoreSelection.bind(null, inst, nextChanged, nextArgument),
+        null,
+      );
+    }
   }
   return value;
 }
@@ -4126,8 +4248,8 @@ if (__DEV__) {
       mountHookTypesDev();
       return readContextWithSelector(context, changed, argument);
     },
-    unstable_startSelectedHook(): void {
-      startSelectedHook();
+    unstable_startSelectedHook(kind: 1 | 2): void {
+      startSelectedHook(kind);
     },
     unstable_selectHookResult<T>(
       value: T,
@@ -4314,8 +4436,8 @@ if (__DEV__) {
       updateHookTypesDev();
       return readContextWithSelector(context, changed, argument);
     },
-    unstable_startSelectedHook(): void {
-      startSelectedHook();
+    unstable_startSelectedHook(kind: 1 | 2): void {
+      startSelectedHook(kind);
     },
     unstable_selectHookResult<T>(
       value: T,
@@ -4497,8 +4619,8 @@ if (__DEV__) {
       updateHookTypesDev();
       return readContextWithSelector(context, changed, argument);
     },
-    unstable_startSelectedHook(): void {
-      startSelectedHook();
+    unstable_startSelectedHook(kind: 1 | 2): void {
+      startSelectedHook(kind);
     },
     unstable_selectHookResult<T>(
       value: T,
@@ -4680,8 +4802,8 @@ if (__DEV__) {
       updateHookTypesDev();
       return readContextWithSelector(context, changed, argument);
     },
-    unstable_startSelectedHook(): void {
-      startSelectedHook();
+    unstable_startSelectedHook(kind: 1 | 2): void {
+      startSelectedHook(kind);
     },
     unstable_selectHookResult<T>(
       value: T,
@@ -4870,8 +4992,8 @@ if (__DEV__) {
       mountHookTypesDev();
       return readContextWithSelector(context, changed, argument);
     },
-    unstable_startSelectedHook(): void {
-      startSelectedHook();
+    unstable_startSelectedHook(kind: 1 | 2): void {
+      startSelectedHook(kind);
     },
     unstable_selectHookResult<T>(
       value: T,
@@ -5079,8 +5201,8 @@ if (__DEV__) {
       updateHookTypesDev();
       return readContextWithSelector(context, changed, argument);
     },
-    unstable_startSelectedHook(): void {
-      startSelectedHook();
+    unstable_startSelectedHook(kind: 1 | 2): void {
+      startSelectedHook(kind);
     },
     unstable_selectHookResult<T>(
       value: T,
@@ -5288,8 +5410,8 @@ if (__DEV__) {
       updateHookTypesDev();
       return readContextWithSelector(context, changed, argument);
     },
-    unstable_startSelectedHook(): void {
-      startSelectedHook();
+    unstable_startSelectedHook(kind: 1 | 2): void {
+      startSelectedHook(kind);
     },
     unstable_selectHookResult<T>(
       value: T,

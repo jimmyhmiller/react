@@ -122,6 +122,42 @@ paths of the returned value say nothing about when the hook's result changes.
   the hook returned that context's value. Unregistered hooks cost a `WeakSet`
   lookup.
 
+### External stores
+
+Store libraries read their store with `useSyncExternalStore`, and render every
+subscribed component whose selector returns a different value (by
+`Object.is`). Apps commonly select one field per call, and derive what they
+render from it:
+
+```js
+const selectedCardId = useBoardStore(state => state.selectedCardId);
+const isSelected = card.id === selectedCardId; // only this is rendered
+```
+
+Selecting a new card re-renders every card, although only two cards render
+different output. The call is selected like a context hook call (the
+description here is `[[1, card.id]]`), and React applies the description if:
+
+- the hook is registered as a store hook: it returns the snapshot of the one
+  `useSyncExternalStore` it calls, for every snapshot. The contract of library
+  hooks is known by module (`compiler/crates/react_compiler/src/entrypoint/store_hooks.rs`):
+  a module that imports React Redux's `useSelector` or Zustand's `useStore`
+  registers them after the import, and a module that defines
+  `const useX = create(...)` with Zustand's `create` registers `useX` after the
+  declaration (the Babel plugin's prefilter lets such a module, which has no
+  React functions, reach the compiler);
+- the call read exactly one store and returned its snapshot.
+
+In React (`ReactFiberHooks.js`), the store instance of a `useSyncExternalStore`
+hook gains `changed` and `changedArgument`. When the store notifies the
+component, a new snapshot only counts as a change if `changed(renderedSnapshot,
+newSnapshot, argument)` returns true (or throws). The comparison is committed
+with the render (a passive effect, only pushed when the description changed;
+set directly on a store instance created by the render), since the store
+instance is shared by renders that may not commit. The checks for store
+changes between render and commit and during concurrent renders still compare
+snapshots, which at worst renders the component again.
+
 ### Fallback
 
 If an attempt that selected context reads fails to compile, the entrypoint
@@ -160,7 +196,23 @@ Board app (`compiler/apps/todomvc-benchmark/src/board`), 1,000 cards, median ms
 | toggle theme 10 times (every card renders) | 28.9 | 31.3 |
 | toggle "only mine" 10 times (mounts) | 104.1 | 105.3 |
 
-Renders per notification: 1,016 before, 2 after. The remaining cost when every
+Renders per notification: 1,016 before, 2 after.
+
+The same board with a Zustand store, reading one field per selector as the
+Zustand documentation recommends, and comparing in render
+(`card.id === selectedCardId`, `starred[card.id] === true`):
+
+| workload | lists | lists + selectors |
+|---|---|---|
+| select 20 cards | 70.8 | 14.2 |
+| star 20 cards | 72.3 | 17.0 |
+| toggle theme 10 times (every card renders) | 52.7 | 54.8 |
+| other workloads | within 1% | |
+
+Renders per selection: 1,001 before, 3 after; per star: 1,000 before, 1 after.
+For comparison, the React Redux version of the app, whose selectors already
+compute `state.ui.selectedCardId === cardId`, takes 16.9 ms to select 20
+cards. Its selectors leave nothing to select, so it is unchanged. The remaining cost when every
 consumer renders anyway (theme) is the start/select calls per custom hook call.
 
 ## Tests

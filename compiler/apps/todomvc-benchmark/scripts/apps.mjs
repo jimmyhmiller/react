@@ -6,7 +6,8 @@
  */
 
 // The benchmark apps. React variants compile `source` (the file with the
-// app's components) and bundle `entry`; other frameworks bundle their entry in
+// app's components) and the app's other `modules` (like its stores), and
+// bundle `entry`; other frameworks bundle their entry in
 // `frameworkEntries`, if the app has one for them. Paths are relative to src/,
 // except `css`, which is relative to this package.
 export const APPS = [
@@ -42,12 +43,14 @@ export const APPS = [
   {
     name: 'board-zustand',
     source: 'board/ZustandBoardApp.jsx',
+    modules: ['board/zustandStore.js'],
     entry: 'board/zustand-main.jsx',
     css: 'src/board/board.css',
   },
   {
     name: 'board-redux',
     source: 'board/ReduxBoardApp.jsx',
+    modules: ['board/reduxStore.js'],
     entry: 'board/redux-main.jsx',
     css: 'src/board/board.css',
   },

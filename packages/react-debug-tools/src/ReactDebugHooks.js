@@ -790,7 +790,7 @@ const Dispatcher: DispatcherType = {
   useCallback,
   useContext,
   unstable_useContextWithSelector: useContextWithSelector,
-  unstable_startSelectedHook(): void {},
+  unstable_startSelectedHook(kind: 1 | 2): void {},
   unstable_selectHookResult<T>(value: T): T {
     return value;
   },
