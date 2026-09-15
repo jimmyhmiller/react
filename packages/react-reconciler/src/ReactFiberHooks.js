@@ -16,6 +16,7 @@ import type {
   Awaited,
 } from 'shared/ReactTypes';
 import type {
+  ContextDependency,
   Fiber,
   FiberRoot,
   Dispatcher,
@@ -79,7 +80,14 @@ import {
   ContinuousEventPriority,
   higherEventPriority,
 } from './ReactEventPriorities';
-import {readContext, checkIfContextChanged} from './ReactFiberNewContext';
+import {
+  readContext,
+  readContextWithSelector,
+  checkIfContextChanged,
+  getLastContextDependency,
+  getNextContextDependency,
+  setContextDependencySelector,
+} from './ReactFiberNewContext';
 import {HostRoot, CacheComponent, HostComponent} from './ReactWorkTags';
 import {
   LayoutStatic as LayoutStaticEffect,
@@ -3895,12 +3903,62 @@ function markUpdateInDevTools<A>(fiber: Fiber, lane: Lane, action: A): void {
   }
 }
 
+// A call of a custom hook whose returned value is selected (see
+// unstable_useHookWithSelector in react/compiler-runtime) starts by recording
+// the hooks and context dependencies of the rendering component. A registered
+// context hook only reads a context, so these calls do not nest.
+let selectedHookFiber: Fiber | null = null;
+let selectedHookHook: Hook | null = null;
+let selectedHookDependency: ContextDependency<mixed> | null = null;
+
+function startSelectedHook(): void {
+  selectedHookFiber = currentlyRenderingFiber;
+  selectedHookHook = workInProgressHook;
+  selectedHookDependency = getLastContextDependency();
+}
+
+// If the hook call since startSelectedHook read exactly one context, called no
+// other hooks, and returned the context value, then the component's render
+// only depends on what `changed` compares (the compiler verified that the hook
+// returns the value it reads for every value): the comparison is attached to
+// the context dependency. Otherwise nothing changes.
+function selectHookResult<T>(
+  value: T,
+  changed: (previous: T, next: T, argument: mixed) => boolean,
+  argument: mixed,
+): T {
+  const fiber = selectedHookFiber;
+  const previousDependency = selectedHookDependency;
+  const hook = selectedHookHook;
+  selectedHookFiber = null;
+  selectedHookHook = null;
+  selectedHookDependency = null;
+  if (fiber !== currentlyRenderingFiber || hook !== workInProgressHook) {
+    return value;
+  }
+  const dependency = getLastContextDependency();
+  if (
+    dependency !== null &&
+    dependency !== previousDependency &&
+    getNextContextDependency(currentlyRenderingFiber, previousDependency) ===
+      dependency &&
+    dependency.changed == null &&
+    is(dependency.memoizedValue, value)
+  ) {
+    setContextDependencySelector(dependency, changed as any, argument);
+  }
+  return value;
+}
+
 export const ContextOnlyDispatcher: Dispatcher = {
   readContext,
 
   use,
   useCallback: throwInvalidHookError,
   useContext: throwInvalidHookError,
+  unstable_useContextWithSelector: throwInvalidHookError,
+  unstable_startSelectedHook: throwInvalidHookError,
+  unstable_selectHookResult: throwInvalidHookError,
   useEffect: throwInvalidHookError,
   useImperativeHandle: throwInvalidHookError,
   useLayoutEffect: throwInvalidHookError,
@@ -3929,6 +3987,9 @@ const HooksDispatcherOnMount: Dispatcher = {
   use,
   useCallback: mountCallback,
   useContext: readContext,
+  unstable_useContextWithSelector: readContextWithSelector,
+  unstable_startSelectedHook: startSelectedHook,
+  unstable_selectHookResult: selectHookResult,
   useEffect: mountEffect,
   useImperativeHandle: mountImperativeHandle,
   useLayoutEffect: mountLayoutEffect,
@@ -3957,6 +4018,9 @@ const HooksDispatcherOnUpdate: Dispatcher = {
   use,
   useCallback: updateCallback,
   useContext: readContext,
+  unstable_useContextWithSelector: readContextWithSelector,
+  unstable_startSelectedHook: startSelectedHook,
+  unstable_selectHookResult: selectHookResult,
   useEffect: updateEffect,
   useImperativeHandle: updateImperativeHandle,
   useInsertionEffect: updateInsertionEffect,
@@ -3985,6 +4049,9 @@ const HooksDispatcherOnRerender: Dispatcher = {
   use,
   useCallback: updateCallback,
   useContext: readContext,
+  unstable_useContextWithSelector: readContextWithSelector,
+  unstable_startSelectedHook: startSelectedHook,
+  unstable_selectHookResult: selectHookResult,
   useEffect: updateEffect,
   useImperativeHandle: updateImperativeHandle,
   useInsertionEffect: updateInsertionEffect,
@@ -4049,6 +4116,25 @@ if (__DEV__) {
       currentHookNameInDev = 'useContext';
       mountHookTypesDev();
       return readContext(context);
+    },
+    unstable_useContextWithSelector<T>(
+      context: ReactContext<T>,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      currentHookNameInDev = 'useContext';
+      mountHookTypesDev();
+      return readContextWithSelector(context, changed, argument);
+    },
+    unstable_startSelectedHook(): void {
+      startSelectedHook();
+    },
+    unstable_selectHookResult<T>(
+      value: T,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      return selectHookResult(value, changed, argument);
     },
     useEffect(
       create: () => (() => void) | void,
@@ -4219,6 +4305,25 @@ if (__DEV__) {
       updateHookTypesDev();
       return readContext(context);
     },
+    unstable_useContextWithSelector<T>(
+      context: ReactContext<T>,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      currentHookNameInDev = 'useContext';
+      updateHookTypesDev();
+      return readContextWithSelector(context, changed, argument);
+    },
+    unstable_startSelectedHook(): void {
+      startSelectedHook();
+    },
+    unstable_selectHookResult<T>(
+      value: T,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      return selectHookResult(value, changed, argument);
+    },
     useEffect(
       create: () => (() => void) | void,
       deps: Array<mixed> | void | null,
@@ -4383,6 +4488,25 @@ if (__DEV__) {
       updateHookTypesDev();
       return readContext(context);
     },
+    unstable_useContextWithSelector<T>(
+      context: ReactContext<T>,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      currentHookNameInDev = 'useContext';
+      updateHookTypesDev();
+      return readContextWithSelector(context, changed, argument);
+    },
+    unstable_startSelectedHook(): void {
+      startSelectedHook();
+    },
+    unstable_selectHookResult<T>(
+      value: T,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      return selectHookResult(value, changed, argument);
+    },
     useEffect(
       create: () => (() => void) | void,
       deps: Array<mixed> | void | null,
@@ -4546,6 +4670,25 @@ if (__DEV__) {
       currentHookNameInDev = 'useContext';
       updateHookTypesDev();
       return readContext(context);
+    },
+    unstable_useContextWithSelector<T>(
+      context: ReactContext<T>,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      currentHookNameInDev = 'useContext';
+      updateHookTypesDev();
+      return readContextWithSelector(context, changed, argument);
+    },
+    unstable_startSelectedHook(): void {
+      startSelectedHook();
+    },
+    unstable_selectHookResult<T>(
+      value: T,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      return selectHookResult(value, changed, argument);
     },
     useEffect(
       create: () => (() => void) | void,
@@ -4716,6 +4859,26 @@ if (__DEV__) {
       warnInvalidHookAccess();
       mountHookTypesDev();
       return readContext(context);
+    },
+    unstable_useContextWithSelector<T>(
+      context: ReactContext<T>,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      currentHookNameInDev = 'useContext';
+      warnInvalidHookAccess();
+      mountHookTypesDev();
+      return readContextWithSelector(context, changed, argument);
+    },
+    unstable_startSelectedHook(): void {
+      startSelectedHook();
+    },
+    unstable_selectHookResult<T>(
+      value: T,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      return selectHookResult(value, changed, argument);
     },
     useEffect(
       create: () => (() => void) | void,
@@ -4906,6 +5069,26 @@ if (__DEV__) {
       updateHookTypesDev();
       return readContext(context);
     },
+    unstable_useContextWithSelector<T>(
+      context: ReactContext<T>,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      currentHookNameInDev = 'useContext';
+      warnInvalidHookAccess();
+      updateHookTypesDev();
+      return readContextWithSelector(context, changed, argument);
+    },
+    unstable_startSelectedHook(): void {
+      startSelectedHook();
+    },
+    unstable_selectHookResult<T>(
+      value: T,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      return selectHookResult(value, changed, argument);
+    },
     useEffect(
       create: () => (() => void) | void,
       deps: Array<mixed> | void | null,
@@ -5094,6 +5277,26 @@ if (__DEV__) {
       warnInvalidHookAccess();
       updateHookTypesDev();
       return readContext(context);
+    },
+    unstable_useContextWithSelector<T>(
+      context: ReactContext<T>,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      currentHookNameInDev = 'useContext';
+      warnInvalidHookAccess();
+      updateHookTypesDev();
+      return readContextWithSelector(context, changed, argument);
+    },
+    unstable_startSelectedHook(): void {
+      startSelectedHook();
+    },
+    unstable_selectHookResult<T>(
+      value: T,
+      changed: (previous: T, next: T, argument: mixed) => boolean,
+      argument: mixed,
+    ): T {
+      return selectHookResult(value, changed, argument);
     },
     useEffect(
       create: () => (() => void) | void,

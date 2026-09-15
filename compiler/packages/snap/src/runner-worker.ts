@@ -5,6 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+// Must come first: it can redirect imports of React (see the module).
+import './react-build-alias';
 import type {PluginObj} from '@babel/core';
 import type {parseConfigPragmaForTests as ParseConfigPragma} from 'babel-plugin-react-compiler/src/Utils/TestUtils';
 import type {printFunctionWithOutlined as PrintFunctionWithOutlined} from 'babel-plugin-react-compiler/src/HIR/PrintHIR';

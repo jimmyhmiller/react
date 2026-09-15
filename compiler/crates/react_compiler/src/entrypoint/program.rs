@@ -1518,21 +1518,25 @@ fn try_compile_function(
         }
     }
 
-    // Component inlining and list item memoization are experiments that must
-    // never turn a successful compilation into a bailout. Compile with every
-    // enabled experiment first; if an attempt that used an experiment fails,
-    // discard everything it recorded and compile again without that
-    // experiment: first without list item memoization, then also without
-    // inlining.
+    // Component inlining, list item memoization and context selectors are
+    // experiments that must never turn a successful compilation into a
+    // bailout. Compile with every enabled experiment first; if an attempt that
+    // used an experiment fails, discard everything it recorded and compile
+    // again without that experiment: first without context selectors, then
+    // without list item memoization, then also without inlining.
     let mut use_inlining = !inline_candidates.is_empty();
     let mut use_list_memoization = env_config.enable_list_item_memoization;
+    let mut use_context_selectors = env_config.enable_context_selectors;
     loop {
         let attempt_config;
-        let config = if use_list_memoization == env_config.enable_list_item_memoization {
+        let config = if use_list_memoization == env_config.enable_list_item_memoization
+            && use_context_selectors == env_config.enable_context_selectors
+        {
             env_config
         } else {
             attempt_config = EnvironmentConfig {
                 enable_list_item_memoization: use_list_memoization,
+                enable_context_selectors: use_context_selectors,
                 ..env_config.clone()
             };
             &attempt_config
@@ -1540,6 +1544,7 @@ fn try_compile_function(
         let checkpoint = context.checkpoint();
         let mut inlined_sites = 0;
         let mut memoized_lists = 0;
+        let mut selected_context_reads = 0;
         let result = pipeline::compile_fn(
             &source.fn_node,
             source.fn_name.as_deref(),
@@ -1554,14 +1559,22 @@ fn try_compile_function(
             },
             &mut inlined_sites,
             &mut memoized_lists,
+            &mut selected_context_reads,
             context,
         );
         let error = match result {
-            Err(error) if memoized_lists > 0 || inlined_sites > 0 => error,
+            Err(error)
+                if memoized_lists > 0 || inlined_sites > 0 || selected_context_reads > 0 =>
+            {
+                error
+            }
             result => return result,
         };
         context.rollback(checkpoint);
-        let disabled = if memoized_lists > 0 {
+        let disabled = if selected_context_reads > 0 {
+            use_context_selectors = false;
+            "context selectors"
+        } else if memoized_lists > 0 {
             use_list_memoization = false;
             "list item memoization"
         } else {
@@ -1572,9 +1585,10 @@ fn try_compile_function(
             context.log_debug(DebugLogEntry::new(
                 "ExperimentalFallback",
                 format!(
-                    "compilation failed after inlining {} site(s) and memoizing {} list(s); compiling without {}\n{}",
+                    "compilation failed after inlining {} site(s), memoizing {} list(s) and selecting {} context read(s); compiling without {}\n{}",
                     inlined_sites,
                     memoized_lists,
+                    selected_context_reads,
                     disabled,
                     error.to_string_for_event()
                 ),
@@ -2858,6 +2872,8 @@ fn apply_compiled_functions(
         .iter()
         .any(|cf| cf.codegen_fn.memo_slots_used > 0);
     let mut block_templates = Vec::new();
+    // Hooks to register as context hooks, after their declaration.
+    let mut context_hooks: Vec<(u32, String)> = Vec::new();
 
     // Replace each compiled function in the AST
     for (idx, mut compiled) in compiled_fns.into_iter().enumerate() {
@@ -2865,6 +2881,11 @@ fn apply_compiled_functions(
         let original_kind = compiled.original_kind;
 
         block_templates.append(&mut compiled.codegen_fn.block_templates);
+        if compiled.codegen_fn.registers_context_hook && compiled.gating.is_none() {
+            if let (Some(node_id), Some(id)) = (fn_node_id, &compiled.codegen_fn.id) {
+                context_hooks.push((node_id, id.name.clone()));
+            }
+        }
 
         // Collect outlined functions for this compiled function
         for mut outlined in std::mem::take(&mut compiled.codegen_fn.outlined) {
@@ -2937,6 +2958,38 @@ fn apply_compiled_functions(
             }
             OriginalFnKind::FunctionExpression | OriginalFnKind::ArrowFunctionExpression => {
                 program.body.push(outlined_stmt);
+            }
+        }
+    }
+
+    // `unstable_registerContextHook(useX)` after each context hook (see
+    // context_selectors in react_compiler_optimization).
+    if !context_hooks.is_empty() {
+        let module = context.react_runtime_module.clone();
+        let register = context
+            .add_import_specifier(&module, "unstable_registerContextHook", None)
+            .name;
+        for (node_id, name) in context_hooks {
+            let identifier = |name: String| Identifier {
+                base: BaseNode::typed("Identifier"),
+                name,
+                type_annotation: None,
+                optional: None,
+                decorators: None,
+            };
+            let statement = Statement::ExpressionStatement(ExpressionStatement {
+                base: BaseNode::typed("ExpressionStatement"),
+                expression: Box::new(Expression::CallExpression(CallExpression {
+                    base: BaseNode::typed("CallExpression"),
+                    callee: Box::new(Expression::Identifier(identifier(register.clone()))),
+                    arguments: vec![Expression::Identifier(identifier(name))],
+                    type_parameters: None,
+                    type_arguments: None,
+                    optional: None,
+                })),
+            });
+            if !insert_after_fn_recursive(&mut program.body, node_id, statement) {
+                panic!("SelectContextReads: the declaration of a registered context hook was not found");
             }
         }
     }

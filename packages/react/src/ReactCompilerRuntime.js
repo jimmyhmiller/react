@@ -7,15 +7,161 @@
  * @flow
  */
 
-import {useMemoCache} from './ReactHooks';
+import {
+  useMemoCache,
+  useContextWithSelector,
+  startSelectedHook,
+  selectHookResult,
+} from './ReactHooks';
 import {
   REACT_LIST_CHANGES,
   REACT_MEMO_CACHE_SENTINEL,
 } from 'shared/ReactSymbols';
-import {enableNoCloningMemoCache} from 'shared/ReactFeatureFlags';
+import type {ReactContext} from 'shared/ReactTypes';
+import {
+  enableContextSelectors,
+  enableNoCloningMemoCache,
+} from 'shared/ReactFeatureFlags';
 import isArray from 'shared/isArray';
 
 export {useMemoCache as c};
+
+// See enableContextSelectors.
+export function unstable_useContextWithSelector<T>(
+  Context: ReactContext<T>,
+  select: (value: T) => Array<mixed>,
+): T {
+  if (!enableContextSelectors) {
+    throw new Error(
+      'Context selectors are not enabled in this build of React.',
+    );
+  }
+  return useContextWithSelector(Context, selectorChanged as any, select);
+}
+
+// Whether a selector returns different values (by Object.is) for two values.
+function selectorChanged(
+  previous: mixed,
+  next: mixed,
+  select: (value: mixed) => Array<mixed>,
+): boolean {
+  const previousSelected = select(previous);
+  const nextSelected = select(next);
+  if (
+    !isArray(previousSelected) ||
+    !isArray(nextSelected) ||
+    previousSelected.length !== nextSelected.length
+  ) {
+    return true;
+  }
+  for (let i = 0; i < nextSelected.length; i++) {
+    if (!Object.is(previousSelected[i], nextSelected[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Selected values described as data, as emitted by the compiler. Each entry
+// is an array:
+// - `[0, ...keys]`: the value at the path `keys` of the context value;
+// - `[1, operand, ...keys]`: whether that value is `=== operand`.
+// Reading a key of `null` or `undefined` gives `undefined` instead of
+// throwing: a render that reads the same path throws or does not read it.
+export type SelectedPaths = $ReadOnlyArray<$ReadOnlyArray<mixed>>;
+
+function readPath(value: mixed, entry: $ReadOnlyArray<mixed>, start: number) {
+  let current: any = value;
+  for (let i = start; i < entry.length; i++) {
+    if (current == null) {
+      return undefined;
+    }
+    current = current[entry[i] as any];
+  }
+  return current;
+}
+
+// Whether a description selects different values from two context values,
+// called by React with the description as its argument (so that nothing is
+// allocated per description or per comparison).
+function pathsChanged(previous: mixed, next: mixed, argument: mixed): boolean {
+  const paths: SelectedPaths = argument as any;
+  for (let i = 0; i < paths.length; i++) {
+    const entry = paths[i];
+    if (entry[0] === 0) {
+      if (!Object.is(readPath(previous, entry, 1), readPath(next, entry, 1))) {
+        return true;
+      }
+    } else if (
+      (readPath(previous, entry, 2) === entry[1]) !==
+      (readPath(next, entry, 2) === entry[1])
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function unstable_useContextPaths<T>(
+  Context: ReactContext<T>,
+  paths: SelectedPaths,
+): T {
+  if (!enableContextSelectors) {
+    throw new Error(
+      'Context selectors are not enabled in this build of React.',
+    );
+  }
+  return useContextWithSelector(Context, pathsChanged as any, paths);
+}
+
+// Custom hooks that the compiler verified to return the value of the one
+// context they read (or throw), for every value of the context.
+const contextHooks: WeakSet<Function> = new WeakSet();
+
+export function unstable_registerContextHook(hook: Function): void {
+  if (enableContextSelectors) {
+    contextHooks.add(hook);
+  }
+}
+
+// `const started = unstable_startSelectedHook(useX); const value = useX(...);
+// unstable_selectHookPaths(started, value, useX, paths)` behaves like
+// `const value = useX(...)`, but if `useX` is a registered context hook, the
+// component only renders for a change of that context if the selected values
+// change (see unstable_useContextPaths). React checks that the call read
+// exactly one context, called no other hook and returned the context value.
+export function unstable_startSelectedHook(hook: Function): boolean {
+  if (!enableContextSelectors) {
+    throw new Error(
+      'Context selectors are not enabled in this build of React.',
+    );
+  }
+  if (contextHooks.has(hook)) {
+    startSelectedHook();
+    return true;
+  }
+  return false;
+}
+
+export function unstable_selectHookPaths<T>(
+  started: boolean,
+  value: T,
+  hook: Function,
+  paths: SelectedPaths,
+): T {
+  return started ? selectHookResult(value, pathsChanged as any, paths) : value;
+}
+
+export function unstable_selectHookResult<T>(
+  started: boolean,
+  value: T,
+  hook: Function,
+  select: (value: T) => Array<mixed>,
+): T {
+  return started
+    ? selectHookResult(value, selectorChanged as any, select)
+    : value;
+}
 
 // Memo caches for the items of a list rendered by a `.map` callback, used by
 // React Compiler output that memoizes each item of a list separately.

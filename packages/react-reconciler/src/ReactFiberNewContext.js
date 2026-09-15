@@ -33,6 +33,7 @@ import {
 } from './ReactFiberFlags';
 
 import is from 'shared/objectIs';
+import {enableContextSelectors} from 'shared/ReactFeatureFlags';
 import {getHostTransitionProvider} from './ReactFiberHostContext';
 
 const valueCursor: StackCursor<mixed> = createCursor(null);
@@ -240,6 +241,21 @@ function propagateContextChanges<T>(
           // Check if the context matches.
           // $FlowFixMe[invalid-compare]
           if (dependency.context === context) {
+            if (
+              enableContextSelectors &&
+              dependency.changed != null &&
+              !selectedValuesChanged(
+                dependency,
+                // $FlowFixMe[constant-condition]
+                isPrimaryRenderer
+                  ? context._currentValue
+                  : context._currentValue2,
+              )
+            ) {
+              // The consumer only depends on values of the context that did
+              // not change: it does not need to render.
+              continue findContext;
+            }
             // Match! Schedule an update on this fiber.
 
             // In the lazy implementation, don't mark a dirty flag on the
@@ -529,11 +545,37 @@ export function checkIfContextChanged(
       : context._currentValue2;
     const oldValue = dependency.memoizedValue;
     if (!is(newValue, oldValue)) {
-      return true;
+      if (
+        !enableContextSelectors ||
+        dependency.changed == null ||
+        selectedValuesChanged(dependency, newValue)
+      ) {
+        return true;
+      }
     }
     dependency = dependency.next;
   }
   return false;
+}
+
+// Whether a new value of a context changes what a consumer that read the
+// context with a selector depends on. A comparison that throws is treated as a
+// change, so that the consumer renders (and throws, if its render does).
+function selectedValuesChanged(
+  dependency: ContextDependency<mixed>,
+  newValue: mixed,
+): boolean {
+  const changed: (previous: mixed, next: mixed, argument: mixed) => boolean =
+    dependency.changed as any;
+  try {
+    return changed(
+      dependency.memoizedValue,
+      newValue,
+      dependency.changedArgument,
+    );
+  } catch (error) {
+    return true;
+  }
 }
 
 export function prepareToReadContext(
@@ -577,20 +619,92 @@ export function readContextDuringReconciliation<T>(
   return readContextForConsumer(consumer, context);
 }
 
+// Reads a context like `readContext`, but a later change of the context value
+// only makes the component render if `changed(valueReadNow, newValue,
+// argument)` returns true. `changed` must be pure: it is called when the
+// context value changes, possibly without the component rendering.
+export function readContextWithSelector<T>(
+  context: ReactContext<T>,
+  changed: (previous: T, next: T, argument: mixed) => boolean,
+  argument: mixed,
+): T {
+  if (!enableContextSelectors) {
+    throw new Error(
+      'Context selectors are not enabled in this build of React.',
+    );
+  }
+  if (__DEV__) {
+    if (isDisallowedContextReadInDEV) {
+      console.error(
+        'Context can only be read while React is rendering. ' +
+          'In classes, you can read it in the render method or getDerivedStateFromProps. ' +
+          'In function components, you can read it directly in the function body, but not ' +
+          'inside Hooks like useReducer() or useMemo().',
+      );
+    }
+  }
+  return readContextForConsumer(
+    currentlyRenderingFiber,
+    context,
+    changed,
+    argument,
+  );
+}
+
+// The last context dependency recorded by the component that is rendering, or
+// null if it has not read a context yet in this render.
+export function getLastContextDependency(): ContextDependency<mixed> | null {
+  return lastContextDependency;
+}
+
+// The dependency recorded after `previous` (or the first dependency, if
+// `previous` is null) by the component that is rendering.
+export function getNextContextDependency(
+  fiber: Fiber,
+  previous: ContextDependency<mixed> | null,
+): ContextDependency<mixed> | null {
+  if (previous !== null) {
+    return previous.next;
+  }
+  const dependencies = fiber.dependencies;
+  return dependencies === null ? null : dependencies.firstContext;
+}
+
+// Gives a context dependency recorded in this render a selector, as if it had
+// been read with readContextWithSelector.
+export function setContextDependencySelector(
+  dependency: ContextDependency<mixed>,
+  changed: (previous: mixed, next: mixed, argument: mixed) => boolean,
+  argument: mixed,
+): void {
+  dependency.changed = changed;
+  dependency.changedArgument = argument;
+}
+
 function readContextForConsumer<T>(
   consumer: Fiber | null,
   context: ReactContext<T>,
+  changed: null | ((previous: T, next: T, argument: mixed) => boolean) = null,
+  argument: mixed = undefined,
 ): T {
   // $FlowFixMe[constant-condition]
   const value = isPrimaryRenderer
     ? context._currentValue
     : context._currentValue2;
 
-  const contextItem = {
-    context: context as any as ReactContext<mixed>,
-    memoizedValue: value,
-    next: null,
-  };
+  const contextItem = enableContextSelectors
+    ? {
+        context: context as any as ReactContext<mixed>,
+        memoizedValue: value,
+        next: null,
+        changed: changed as any,
+        changedArgument: argument,
+      }
+    : {
+        context: context as any as ReactContext<mixed>,
+        memoizedValue: value,
+        next: null,
+      };
 
   if (lastContextDependency === null) {
     if (consumer === null) {

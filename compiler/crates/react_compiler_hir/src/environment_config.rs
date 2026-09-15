@@ -195,14 +195,23 @@ pub struct EnvironmentConfig {
     #[serde(default)]
     pub enable_jsx_blocks: bool,
 
-    /// Rust compiler only. With `enable_jsx_blocks`, memoize each item of a
-    /// list rendered by a `.map` callback that returns a leaf block: the
-    /// callback's body is compiled as a separate function whose memo cache
-    /// comes from `unstable_useListItemMemoCache` in react/compiler-runtime.
-    /// Requires the react/compiler-runtime module (target 19). Client output
-    /// only. See `compiler/docs/experiments/0002-compiled-blocks.md`.
+    /// Rust compiler only. Memoize each item of a rendered list: the element
+    /// returned by a `.map` callback is memoized in a memo cache per item from
+    /// `unstable_useListItemMemoCache` in react/compiler-runtime. Applies to
+    /// lists of compiled blocks (with `enable_jsx_blocks`) and to lists of
+    /// other elements at a rendered position. Requires the
+    /// react/compiler-runtime module (target 19). Client output only. See
+    /// `compiler/docs/experiments/0002-compiled-blocks.md`.
     #[serde(default)]
     pub enable_list_item_memoization: bool,
+
+    /// Rust compiler only. Describe the values of each context a component
+    /// reads, so that React only renders it for a change of those values
+    /// (requires a React build with `enableContextSelectors` and the
+    /// react/compiler-runtime module, target 19). Client output only. See
+    /// `compiler/docs/experiments/0003-context-selectors.md`.
+    #[serde(default)]
+    pub enable_context_selectors: bool,
 }
 
 impl Default for EnvironmentConfig {
@@ -249,6 +258,7 @@ impl Default for EnvironmentConfig {
             enable_component_inlining: false,
             enable_jsx_blocks: false,
             enable_list_item_memoization: false,
+            enable_context_selectors: false,
             custom_macros: None,
         }
     }

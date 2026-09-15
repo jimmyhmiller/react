@@ -238,6 +238,8 @@ pub struct CodegenFunction {
     pub block_templates: Vec<react_compiler_hir::block_template::BlockTemplate>,
     /// See `Environment::returns_block`.
     pub returns_block: react_compiler_hir::block_template::ReturnsBlock,
+    /// See `Environment::registers_context_hook`.
+    pub registers_context_hook: bool,
 }
 
 /// An outlined function extracted during compilation.

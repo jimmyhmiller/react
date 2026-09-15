@@ -67,6 +67,23 @@ export const VARIANTS = [
     },
   },
   {
+    name: 'local/compiler-lists',
+    framework: 'react',
+    react: 'local',
+    compiler: {environment: {enableListItemMemoization: true}},
+  },
+  {
+    name: 'local/compiler-lists-context',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableListItemMemoization: true,
+        enableContextSelectors: true,
+      },
+    },
+  },
+  {
     name: 'local/compiler-inlining-blocks-lists',
     framework: 'react',
     react: 'local',

@@ -123,6 +123,9 @@ pub struct Environment {
     /// List item callbacks selected by `MemoizeListItems`, with the variable
     /// that holds each list's `unstable_useListItemMemoCache()` result.
     list_item_callbacks: FxHashMap<FunctionId, IdentifierId>,
+    /// The function is a hook that returns the value of its one context read
+    /// (see `SelectContextReads`): its module registers it with React.
+    registers_context_hook: bool,
 
     // Known names for collision-aware UID generation. Lazily populated from
     // identifiers on first use, then updated with each generated name.
@@ -226,6 +229,7 @@ impl Environment {
             block_slot_values: FxHashSet::default(),
             block_functions: FxHashSet::default(),
             list_item_callbacks: FxHashMap::default(),
+            registers_context_hook: false,
             uid_known_names: None,
             config,
         }
@@ -280,6 +284,7 @@ impl Environment {
             block_slot_values: FxHashSet::default(),
             block_functions: FxHashSet::default(),
             list_item_callbacks: FxHashMap::default(),
+            registers_context_hook: false,
             uid_known_names: self.uid_known_names.clone(),
         }
     }
@@ -980,6 +985,15 @@ impl Environment {
     /// cache (see `MemoizeListItems`).
     pub fn add_list_item_callback(&mut self, callback: FunctionId, cache: IdentifierId) {
         self.list_item_callbacks.insert(callback, cache);
+    }
+
+    /// Mark the function as a hook to register as a context hook.
+    pub fn set_registers_context_hook(&mut self) {
+        self.registers_context_hook = true;
+    }
+
+    pub fn registers_context_hook(&self) -> bool {
+        self.registers_context_hook
     }
 
     /// The memo cache variable of a list item callback, if it is one.

@@ -403,6 +403,26 @@ function useContext<T>(context: ReactContext<T>): T {
   return readContextImpl(context);
 }
 
+function startSelectedHook(): void {}
+
+function selectHookResult<T>(
+  value: T,
+  changed: (previous: T, next: T, argument: mixed) => boolean,
+  argument: mixed,
+): T {
+  return value;
+}
+
+// A server render does not re-render when context values change, so the
+// selector is not needed.
+function useContextWithSelector<T>(
+  context: ReactContext<T>,
+  changed: (previous: T, next: T, argument: mixed) => boolean,
+  argument: mixed,
+): T {
+  return useContext(context);
+}
+
 function basicStateReducer<S>(state: S, action: BasicStateAction<S>): S {
   // $FlowFixMe[incompatible-use]: Flow doesn't like mixed types
   return typeof action === 'function' ? action(state) : action;
@@ -886,6 +906,9 @@ export const HooksDispatcher: Dispatcher = supportsClientAPIs
       readContext,
       use,
       useContext,
+      unstable_useContextWithSelector: useContextWithSelector,
+      unstable_startSelectedHook: startSelectedHook,
+      unstable_selectHookResult: selectHookResult,
       useMemo,
       useReducer,
       useRef,
@@ -917,6 +940,9 @@ export const HooksDispatcher: Dispatcher = supportsClientAPIs
       use,
       useCallback,
       useContext,
+      unstable_useContextWithSelector: useContextWithSelector,
+      unstable_startSelectedHook: startSelectedHook,
+      unstable_selectHookResult: selectHookResult,
       useEffect: clientHookNotSupported,
       useImperativeHandle: clientHookNotSupported,
       useInsertionEffect: clientHookNotSupported,

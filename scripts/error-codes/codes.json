@@ -605,5 +605,6 @@
   "617": "Invalid block template: event listener \"%s\" must be a dynamic prop.",
   "618": "Compiled blocks can only be rendered inside HTML content, not inside <svg> or <math>.",
   "619": "Compiled blocks are not enabled in this build of React.",
-  "620": "Compiled blocks cannot be rendered on the server yet. Compile server-rendered components without enableJsxBlocks."
+  "620": "Compiled blocks cannot be rendered on the server yet. Compile server-rendered components without enableJsxBlocks.",
+  "621": "Context selectors are not enabled in this build of React."
 }

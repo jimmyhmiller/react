@@ -71,6 +71,11 @@ export const HooksDispatcher: Dispatcher = {
     return callback;
   },
   useContext: unsupportedContext as any,
+  unstable_useContextWithSelector: unsupportedContext as any,
+  unstable_startSelectedHook(): void {},
+  unstable_selectHookResult<T>(value: T): T {
+    return value;
+  },
   useEffect: unsupportedHook as any,
   useImperativeHandle: unsupportedHook as any,
   useLayoutEffect: unsupportedHook as any,

@@ -39,6 +39,10 @@
 //!   `arguments`, and is not async or a generator,
 //! - its value is rendered by a block slot and each of its items is a block
 //!   (see `CompileJsxBlocks`; items that need fibers get them individually),
+//!   or its value is only rendered, as the items of a fixed position (see
+//!   `jsx_block_positions`), for example `<ul>{items.map(...)}</ul>`: an
+//!   unchanged item then returns the element of the previous render, and
+//!   React bails out of rendering it,
 //! - it has a single `return`, the returned element is created in the block
 //!   of the `return` and no variable is reassigned after it, and neither the
 //!   callback nor its nested functions access context variables, so memoized
@@ -205,6 +209,15 @@ fn find_sites(func: &HirFunction, env: &Environment) -> Vec<Site> {
     };
 
     let slot_values = env.block_slot_values();
+    // Callbacks of lists that are only rendered, as items of a fixed position
+    // (see jsx_block_positions): their elements can be memoized whether or not
+    // they are blocks.
+    let rendered_callbacks = crate::jsx_block_positions::Positions::build(
+        func,
+        env,
+        func.fn_type == ReactFunctionType::Component,
+    )
+    .rendered_list_callbacks();
     let mut sites = Vec::new();
     let mut seen: FxHashSet<FunctionId> = FxHashSet::default();
     for block in func.body.blocks.values() {
@@ -213,11 +226,6 @@ fn find_sites(func: &HirFunction, env: &Environment) -> Vec<Site> {
             let InstructionValue::MethodCall { property, args, .. } = &instr.value else {
                 continue;
             };
-            // The list is rendered by a block slot, and used nowhere else.
-            if !slot_values.contains(&instr.lvalue.identifier) || uses(instr.lvalue.identifier) != 1
-            {
-                continue;
-            }
             if !matches!(
                 def(property.identifier),
                 Some(InstructionValue::PropertyLoad {
@@ -242,7 +250,12 @@ fn find_sites(func: &HirFunction, env: &Environment) -> Vec<Site> {
                 continue;
             };
             let callback = lowered_func.func;
-            if !env.is_block_function(callback)
+            // The list is rendered by a block slot and used nowhere else, with
+            // blocks as items, or it is only rendered.
+            let block_list = slot_values.contains(&instr.lvalue.identifier)
+                && uses(instr.lvalue.identifier) == 1
+                && env.is_block_function(callback);
+            if !(block_list || rendered_callbacks.contains(&callback))
                 || !seen.insert(callback)
                 || !is_memoizable(&env.functions[callback.0 as usize], env)
             {

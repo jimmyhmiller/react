@@ -7,6 +7,7 @@
 
 import type * as BabelCore from '@babel/core';
 import {transformFromAstSync} from '@babel/core';
+import {REACT_BUILD} from './react-build-alias';
 
 import * as BabelParser from '@babel/parser';
 import {NodePath} from '@babel/traverse';
@@ -290,16 +291,25 @@ export async function transformFixtureInput(
   const forgetCode = forgetResult.code;
   let evaluatorCode = null;
 
-  // Compiled blocks need a React DOM build with `enableCompiledBlocks`, which
-  // the sprout runtime does not use. Their runtime behavior is tested in
-  // packages/react-dom (ReactDOMCompiledBlocks-test) instead.
-  const usesCompiledBlocks =
+  // Output of these flags needs experimental React runtime APIs (compiled
+  // blocks, list item memo caches, context selectors) that the installed React
+  // does not have. It is evaluated only with a React build that has them
+  // (SNAP_REACT_BUILD, see react-build-alias); the runtime behavior is also
+  // tested in packages/react-dom and packages/react-reconciler.
+  const rustOnlyPragma = enableRust ? parseRustOnlyEnvironmentPragma(firstLine) : {};
+  const usesExperimentalRuntime =
+    REACT_BUILD === null &&
     enableRust &&
-    (parseRustOnlyEnvironmentPragma(firstLine)['enableJsxBlocks'] === true ||
-      forcedRustFlags.includes('enableJsxBlocks'));
+    [
+      'enableJsxBlocks',
+      'enableListItemMemoization',
+      'enableContextSelectors',
+    ].some(
+      flag => rustOnlyPragma[flag] === true || forcedRustFlags.includes(flag),
+    );
   if (
     includeEvaluator &&
-    !usesCompiledBlocks &&
+    !usesExperimentalRuntime &&
     !SproutTodoFilter.has(fixturePath) &&
     !isExpectError(filename)
   ) {

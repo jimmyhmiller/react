@@ -69,6 +69,12 @@ export type ContextDependency<T> = {
   context: ReactContext<T>,
   next: ContextDependency<mixed> | null,
   memoizedValue: T,
+  // With enableContextSelectors: for a context read with
+  // `unstable_useContextWithSelector`, whether a new value of the context
+  // changes what the consumer's render depends on, called with
+  // `memoizedValue`, the new value and `changedArgument`. Null for other reads.
+  changed?: null | ((previous: T, next: T, argument: mixed) => boolean),
+  changedArgument?: mixed,
   ...
 };
 
@@ -404,6 +410,17 @@ export type Dispatcher = {
     init?: (I) => S,
   ): [S, Dispatch<A>],
   useContext<T>(context: ReactContext<T>): T,
+  unstable_useContextWithSelector<T>(
+    context: ReactContext<T>,
+    changed: (previous: T, next: T, argument: mixed) => boolean,
+    argument: mixed,
+  ): T,
+  unstable_startSelectedHook(): void,
+  unstable_selectHookResult<T>(
+    value: T,
+    changed: (previous: T, next: T, argument: mixed) => boolean,
+    argument: mixed,
+  ): T,
   useRef<T>(initialValue: T): {current: T},
   useEffect(
     create: () => (() => void) | void,

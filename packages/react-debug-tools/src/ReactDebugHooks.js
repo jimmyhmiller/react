@@ -277,6 +277,14 @@ function use<T>(usable: Usable<T>): T {
   throw new Error('An unsupported type was passed to use(): ' + String(usable));
 }
 
+function useContextWithSelector<T>(
+  context: ReactContext<T>,
+  changed: (previous: T, next: T, argument: mixed) => boolean,
+  argument: mixed,
+): T {
+  return useContext(context);
+}
+
 function useContext<T>(context: ReactContext<T>): T {
   const value = readContext(context);
   hookLog.push({
@@ -781,6 +789,11 @@ const Dispatcher: DispatcherType = {
   use,
   useCallback,
   useContext,
+  unstable_useContextWithSelector: useContextWithSelector,
+  unstable_startSelectedHook(): void {},
+  unstable_selectHookResult<T>(value: T): T {
+    return value;
+  },
   useEffect,
   useImperativeHandle,
   useLayoutEffect,

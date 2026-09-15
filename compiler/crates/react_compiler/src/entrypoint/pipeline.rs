@@ -45,6 +45,7 @@ pub fn compile_fn(
     inline_candidates: Option<&InlineComponentCandidates<'_>>,
     inlined_sites: &mut usize,
     memoized_lists: &mut usize,
+    selected_context_reads: &mut usize,
     context: &mut ProgramContext,
 ) -> Result<CodegenFunction, CompilerError> {
     let mut env = Environment::with_config(env_config.clone());
@@ -310,40 +311,71 @@ pub fn compile_fn(
             context.timing.stop();
         }
 
-        // List item callbacks with selections are rewritten before
-        // AnalyseFunctions, so that their effects are inferred from the
-        // rewritten code (see memoize_list_items).
-        if env.config.enable_list_item_memoization
-            && context.react_runtime_module == "react/compiler-runtime"
-        {
-            context.timing.start("MemoizeListItemsWithSelections");
-            let runtime_module = context.react_runtime_module.clone();
-            let mut hook_binding = || {
-                let import = context.add_import_specifier(
-                    &runtime_module,
-                    "unstable_useListItemMemoCache",
-                    Some("useListItemMemoCache"),
-                );
-                react_compiler_hir::NonLocalBinding::ModuleLocal { name: import.name }
-            };
-            *memoized_lists = react_compiler_optimization::memoize_list_items_with_selections(
-                &mut hir,
-                &mut env,
-                &mut hook_binding,
-            );
-            context.timing.stop();
+    }
 
-            if context.debug_enabled {
-                context
-                    .timing
-                    .start("debug_print:MemoizeListItemsWithSelections");
-                let debug_memoize = debug_print::debug_hir(&hir, &env);
-                context.log_debug(DebugLogEntry::new(
-                    "MemoizeListItemsWithSelections",
-                    debug_memoize,
-                ));
-                context.timing.stop();
-            }
+    // Context reads are rewritten before AnalyseFunctions, so that the effects
+    // of the rewritten code are inferred like any other code (see
+    // context_selectors).
+    if env.config.enable_context_selectors
+        && env.output_mode == OutputMode::Client
+        && context.react_runtime_module == "react/compiler-runtime"
+    {
+        context.timing.start("SelectContextReads");
+        if react_compiler_optimization::context_selectors::is_context_identity_hook(&hir, &env) {
+            env.set_registers_context_hook();
+        }
+        let mut imports = RuntimeImports {
+            context: &mut *context,
+        };
+        *selected_context_reads = react_compiler_optimization::context_selectors::select_context_reads(
+            &mut hir,
+            &mut env,
+            &mut imports,
+        );
+        context.timing.stop();
+
+        if context.debug_enabled {
+            context.timing.start("debug_print:SelectContextReads");
+            let debug_select = debug_print::debug_hir(&hir, &env);
+            context.log_debug(DebugLogEntry::new("SelectContextReads", debug_select));
+            context.timing.stop();
+        }
+    }
+
+    // List item callbacks with selections are rewritten before
+    // AnalyseFunctions, so that their effects are inferred from the
+    // rewritten code (see memoize_list_items).
+    if env.config.enable_list_item_memoization
+        && env.output_mode == OutputMode::Client
+        && context.react_runtime_module == "react/compiler-runtime"
+    {
+        context.timing.start("MemoizeListItemsWithSelections");
+        let runtime_module = context.react_runtime_module.clone();
+        let mut hook_binding = || {
+            let import = context.add_import_specifier(
+                &runtime_module,
+                "unstable_useListItemMemoCache",
+                Some("useListItemMemoCache"),
+            );
+            react_compiler_hir::NonLocalBinding::ModuleLocal { name: import.name }
+        };
+        *memoized_lists = react_compiler_optimization::memoize_list_items_with_selections(
+            &mut hir,
+            &mut env,
+            &mut hook_binding,
+        );
+        context.timing.stop();
+
+        if context.debug_enabled {
+            context
+                .timing
+                .start("debug_print:MemoizeListItemsWithSelections");
+            let debug_memoize = debug_print::debug_hir(&hir, &env);
+            context.log_debug(DebugLogEntry::new(
+                "MemoizeListItemsWithSelections",
+                debug_memoize,
+            ));
+            context.timing.stop();
         }
     }
 
@@ -387,7 +419,7 @@ pub fn compile_fn(
     // After AnalyseFunctions, whose dead code elimination removes unused
     // captured variables from nested functions, and before the component's own
     // effects are inferred.
-    if env.config.enable_jsx_blocks && env.output_mode == OutputMode::Client {
+    if env.output_mode == OutputMode::Client {
         // The list item memo cache hook exists in react/compiler-runtime only.
         if env.config.enable_list_item_memoization
             && context.react_runtime_module == "react/compiler-runtime"
@@ -1227,6 +1259,7 @@ pub fn compile_fn(
             outlined: Vec::new(),
             block_templates: o.func.block_templates,
             returns_block: o.func.returns_block,
+            registers_context_hook: o.func.registers_context_hook,
         };
         if let Some(fn_type) = o.fn_type {
             let fn_name = outlined_codegen.id.as_ref().map(|id| id.name.clone());
@@ -1277,6 +1310,7 @@ pub fn compile_fn(
         outlined: compiled_outlined,
         block_templates: codegen_result.block_templates,
         returns_block: codegen_result.returns_block,
+        registers_context_hook: codegen_result.registers_context_hook,
     })
 }
 
@@ -1932,6 +1966,7 @@ fn run_pipeline_passes(
         pruned_memo_values: codegen_result.pruned_memo_values,
         block_templates: codegen_result.block_templates,
         returns_block: codegen_result.returns_block,
+        registers_context_hook: codegen_result.registers_context_hook,
         outlined: codegen_result
             .outlined
             .into_iter()
@@ -1952,6 +1987,7 @@ fn run_pipeline_passes(
                     outlined: Vec::new(),
                     block_templates: o.func.block_templates,
             returns_block: o.func.returns_block,
+            registers_context_hook: o.func.registers_context_hook,
                 },
                 fn_type: o.fn_type,
             })
@@ -2032,5 +2068,34 @@ fn log_errors_as_events(errors: &CompilerError, context: &mut ProgramContext) {
             fn_loc: None,
             detail: detail_info,
         });
+    }
+}
+
+/// Imports of react/compiler-runtime functions for `SelectContextReads`.
+struct RuntimeImports<'c> {
+    context: &'c mut ProgramContext,
+}
+
+impl RuntimeImports<'_> {
+    fn binding(&mut self, specifier: &str) -> react_compiler_hir::NonLocalBinding {
+        let module = self.context.react_runtime_module.clone();
+        let import = self.context.add_import_specifier(&module, specifier, None);
+        react_compiler_hir::NonLocalBinding::ModuleLocal { name: import.name }
+    }
+}
+
+impl react_compiler_optimization::context_selectors::ContextSelectorImports
+    for RuntimeImports<'_>
+{
+    fn use_context_paths(&mut self) -> react_compiler_hir::NonLocalBinding {
+        self.binding("unstable_useContextPaths")
+    }
+
+    fn start_selected_hook(&mut self) -> react_compiler_hir::NonLocalBinding {
+        self.binding("unstable_startSelectedHook")
+    }
+
+    fn select_hook_paths(&mut self) -> react_compiler_hir::NonLocalBinding {
+        self.binding("unstable_selectHookPaths")
     }
 }

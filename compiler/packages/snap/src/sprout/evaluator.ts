@@ -249,6 +249,8 @@ export function doEval(source: string): EvaluatorResult {
     },
     table: mockedLog,
     trace: () => {},
+    // Used by React's performance tracks in development builds.
+    timeStamp: () => {},
   };
   try {
     // source needs to be evaluated in the same scope as invoke

@@ -330,6 +330,23 @@ pub fn memoize_list_item_body(
         return Ok(None);
     }
 
+    // The key is passed to `next` if its value is computed before the scope: it
+    // is a dependency, or a read of one (such as `key={id}` for a parameter).
+    let key = key_place.and_then(|place| {
+        if dependency_ids.contains(&place.identifier) {
+            return Some(place.identifier);
+        }
+        let def = *defs.get(&place.identifier)?;
+        match allocation_value(def) {
+            Some(InstructionValue::LoadLocal { place: read, .. })
+                if allocations.contains(&def) && dependency_ids.contains(&read.identifier) =>
+            {
+                Some(read.identifier)
+            }
+            _ => None,
+        }
+    });
+
     // A dependency that is a temporary is computed before the scope, so it
     // needs a variable, as does the element, which is the scope's output.
     // Codegen tracks temporaries by declaration, and a value built by an
@@ -388,10 +405,5 @@ pub fn memoize_list_item_body(
     }));
     remaining.push(return_statement);
     func.body = remaining;
-    Ok(Some(ListItemScope {
-        output: returned,
-        key: key_place
-            .map(|place| place.identifier)
-            .filter(|id| dependency_ids.contains(id)),
-    }))
+    Ok(Some(ListItemScope { output: returned, key }))
 }

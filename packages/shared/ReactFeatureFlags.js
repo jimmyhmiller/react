@@ -86,6 +86,13 @@ export const enableAsyncIterableChildren = __EXPERIMENTAL__;
  */
 export const enableCompiledBlocks = __EXPERIMENTAL__;
 
+/**
+ * Context reads with a selector: a component whose selected values of a
+ * context are unchanged is not re-rendered when the context value changes.
+ * Emitted by the (Rust) React Compiler; see compiler/docs/experiments.
+ */
+export const enableContextSelectors = __EXPERIMENTAL__;
+
 // Support thenables with status 'pending_weak' in Flight. A weak-pending
 // thenable doesn't keep the stream open; if it resolves before the stream
 // closes for other reasons, its value is emitted, otherwise its reference is

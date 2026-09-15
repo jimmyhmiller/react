@@ -5,6 +5,7 @@ pub mod inline_components;
 pub mod inline_iifes;
 mod jsx_block_positions;
 pub mod jsx_blocks;
+pub mod context_selectors;
 pub mod memoize_list_items;
 pub mod merge_consecutive_blocks;
 pub mod name_anonymous_functions;

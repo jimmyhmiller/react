@@ -73,6 +73,7 @@ export const enableLegacyCache: boolean = true;
 
 export const enableAsyncIterableChildren: boolean = false;
 export const enableCompiledBlocks: boolean = false;
+export const enableContextSelectors: boolean = false;
 export const enableFlightWeakThenables: boolean = false;
 
 export const enableTaint: boolean = false;

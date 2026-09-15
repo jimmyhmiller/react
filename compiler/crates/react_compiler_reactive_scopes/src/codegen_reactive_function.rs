@@ -163,6 +163,8 @@ pub struct CodegenFunction {
     pub block_templates: Vec<react_compiler_hir::block_template::BlockTemplate>,
     /// See `Environment::returns_block`.
     pub returns_block: react_compiler_hir::block_template::ReturnsBlock,
+    /// See `Environment::registers_context_hook`.
+    pub registers_context_hook: bool,
 }
 
 impl std::fmt::Debug for CodegenFunction {
@@ -553,6 +555,7 @@ pub fn codegen_function(
     compiled.outlined = outlined;
     compiled.block_templates = cx.env.take_block_templates();
     compiled.returns_block = cx.env.returns_block();
+    compiled.registers_context_hook = cx.env.registers_context_hook();
 
     Ok(compiled)
 }
@@ -818,6 +821,7 @@ fn codegen_reactive_function(
         outlined: Vec::new(),
         block_templates: Vec::new(),
         returns_block: react_compiler_hir::block_template::ReturnsBlock::No,
+        registers_context_hook: false,
     })
 }
 

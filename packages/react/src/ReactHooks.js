@@ -63,6 +63,42 @@ export function useContext<T>(Context: ReactContext<T>): T {
   return dispatcher.useContext(Context);
 }
 
+// Reads a context like `useContext`, but when the context value changes, the
+// component only renders if `changed(valueItRead, newValue, argument)`
+// returns true. Emitted by React Compiler.
+export function useContextWithSelector<T>(
+  Context: ReactContext<T>,
+  changed: (previous: T, next: T, argument: mixed) => boolean,
+  argument: mixed,
+): T {
+  const dispatcher = resolveDispatcher();
+  if (__DEV__) {
+    if (Context.$$typeof === REACT_CONSUMER_TYPE) {
+      console.error(
+        'Calling useContext(Context.Consumer) is not supported and will cause bugs. ' +
+          'Did you mean to call useContext(Context) instead?',
+      );
+    }
+  }
+  return dispatcher.unstable_useContextWithSelector(Context, changed, argument);
+}
+
+export function startSelectedHook(): void {
+  resolveDispatcher().unstable_startSelectedHook();
+}
+
+export function selectHookResult<T>(
+  value: T,
+  changed: (previous: T, next: T, argument: mixed) => boolean,
+  argument: mixed,
+): T {
+  return resolveDispatcher().unstable_selectHookResult(
+    value,
+    changed,
+    argument,
+  );
+}
+
 export function useState<S>(
   initialState: (() => S) | S,
 ): [S, Dispatch<BasicStateAction<S>>] {

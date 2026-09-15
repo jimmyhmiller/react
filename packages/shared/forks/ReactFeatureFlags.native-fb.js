@@ -42,6 +42,7 @@ export const disableTextareaChildren: boolean = false;
 export const enableAsyncDebugInfo: boolean = true;
 export const enableAsyncIterableChildren: boolean = false;
 export const enableCompiledBlocks: boolean = false;
+export const enableContextSelectors: boolean = false;
 export const enableFlightWeakThenables: boolean = false;
 export const enableCPUSuspense: boolean = true;
 export const enableCreateEventHandleAPI: boolean = false;
