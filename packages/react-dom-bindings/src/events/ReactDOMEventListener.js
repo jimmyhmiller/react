@@ -33,7 +33,11 @@ import {
   HostRoot,
   ActivityComponent,
   SuspenseComponent,
+  HostComponent,
+  HostSingleton,
+  HostBlock,
 } from 'react-reconciler/src/ReactWorkTags';
+import {isStaticIslandFiber} from 'react-reconciler/src/ReactFiber';
 import {type EventSystemFlags, IS_CAPTURE_PHASE} from './EventSystemFlags';
 
 import getEventTarget from './getEventTarget';
@@ -243,6 +247,22 @@ export function findInstanceBlockingEvent(
 
 export let return_targetInst: null | Fiber = null;
 
+function getHostParentFiberOfStaticIsland(island: Fiber): null | Fiber {
+  let fiber = island.return;
+  while (fiber !== null) {
+    switch (fiber.tag) {
+      case HostComponent:
+      case HostSingleton:
+      case HostBlock:
+        return fiber;
+      case HostRoot:
+        return null;
+    }
+    fiber = fiber.return;
+  }
+  return null;
+}
+
 // Returns a SuspenseInstance, ActivityInstance or Container if it's blocked.
 // The return_targetInst field above is conceptually part of the return value.
 export function findInstanceBlockingTarget(
@@ -276,17 +296,23 @@ export function findInstanceBlockingTarget(
         targetInst = null;
       } else if (tag === ActivityComponent) {
         const instance = getActivityInstanceFromFiber(nearestMounted);
-        if (instance !== null) {
+        if (instance !== null && isStaticIslandFiber(nearestMounted)) {
+          // A dehydrated static island has no handlers: dispatch the event
+          // from the island's nearest host ancestor without hydrating it, like
+          // for DOM nodes that React does not own inside a host element.
+          targetInst = getHostParentFiberOfStaticIsland(nearestMounted);
+        } else if (instance !== null) {
           // Queue the event to be replayed later. Abort dispatching since we
           // don't want this event dispatched twice through the event system.
           // TODO: If this is the first discrete event in the queue. Schedule an increased
           // priority for this boundary.
           return instance;
+        } else {
+          // This shouldn't happen, something went wrong but to avoid blocking
+          // the whole system, dispatch the event without a target.
+          // TODO: Warn.
+          targetInst = null;
         }
-        // This shouldn't happen, something went wrong but to avoid blocking
-        // the whole system, dispatch the event without a target.
-        // TODO: Warn.
-        targetInst = null;
       } else if (tag === HostRoot) {
         const root: FiberRoot = nearestMounted.stateNode;
         if (isRootDehydrated(root)) {

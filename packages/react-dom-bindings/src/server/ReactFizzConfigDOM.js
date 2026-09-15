@@ -4661,6 +4661,39 @@ export function pushEndActivityBoundary(
   target.push(endActivityBoundary);
 }
 
+// Static islands (enableStaticIslands) are encoded as comments, around content
+// that needs no hydration.
+const startStaticIsland = stringToPrecomputedChunk('<!--~-->');
+const endStaticIsland = stringToPrecomputedChunk('<!--/~-->');
+const noChunk = stringToPrecomputedChunk('');
+
+// Pushes the start of a static island, and returns its position so that it can
+// be removed (see pushEndStaticIsland).
+export function pushStartStaticIsland(
+  target: Array<Chunk | PrecomputedChunk>,
+  renderState: RenderState,
+): number {
+  target.push(startStaticIsland);
+  return target.length - 1;
+}
+
+// Ends a static island. If its content turned out not to be static, the start
+// comment is removed instead (keeping a text separator if text was pushed right
+// before it).
+export function pushEndStaticIsland(
+  target: Array<Chunk | PrecomputedChunk>,
+  renderState: RenderState,
+  startIndex: number,
+  isStatic: boolean,
+  textEmbeddedBefore: boolean,
+): void {
+  if (isStatic) {
+    target.push(endStaticIsland);
+  } else {
+    target[startIndex] = textEmbeddedBefore ? textSeparator : noChunk;
+  }
+}
+
 // Suspense boundaries are encoded as comments.
 const startCompletedSuspenseBoundary = stringToPrecomputedChunk('<!--$-->');
 const startPendingSuspenseBoundary1 = stringToPrecomputedChunk(

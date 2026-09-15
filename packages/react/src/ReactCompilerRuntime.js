@@ -18,6 +18,7 @@ import {
   REACT_LIST_CHANGES,
   REACT_MEMO_CACHE_SENTINEL,
   REACT_STORE_HOOK_NOT_SKIPPED,
+  REACT_STATIC_ISLAND_TYPE,
 } from 'shared/ReactSymbols';
 import type {ReactContext} from 'shared/ReactTypes';
 import {
@@ -28,6 +29,11 @@ import {
 import isArray from 'shared/isArray';
 
 export {useMemoCache as c};
+
+// A subtree that needs no hydration (enableStaticIslands): server rendered like
+// a visible Activity boundary, and left dehydrated by the client. See
+// compiler/docs/experiments/0005-static-islands.md.
+export const unstable_StaticIsland: symbol = REACT_STATIC_ISLAND_TYPE;
 
 // See enableContextSelectors.
 export function unstable_useContextWithSelector<T>(

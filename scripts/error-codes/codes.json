@@ -610,5 +610,6 @@
   "622": "Update slicing is not enabled in this build of React.",
   "623": "A skipped store hook call did not contain its store. This is a bug in React. Please file an issue.",
   "624": "A hydrated block is missing a node of its template. This is a bug in React. Please file an issue.",
-  "625": "Invalid block template: expected a slot hole."
+  "625": "Invalid block template: expected a slot hole.",
+  "626": "Static islands are not enabled in this build of React."
 }

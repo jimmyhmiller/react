@@ -24,6 +24,8 @@ import {
   pushSegmentFinale as pushSegmentFinaleImpl,
   pushStartActivityBoundary as pushStartActivityBoundaryImpl,
   pushEndActivityBoundary as pushEndActivityBoundaryImpl,
+  pushStartStaticIsland as pushStartStaticIslandImpl,
+  pushEndStaticIsland as pushEndStaticIslandImpl,
   writeStartCompletedSuspenseBoundary as writeStartCompletedSuspenseBoundaryImpl,
   writeStartClientRenderedSuspenseBoundary as writeStartClientRenderedSuspenseBoundaryImpl,
   writeEndCompletedSuspenseBoundary as writeEndCompletedSuspenseBoundaryImpl,
@@ -262,6 +264,36 @@ export function pushEndActivityBoundary(
     return;
   }
   pushEndActivityBoundaryImpl(target, renderState);
+}
+
+export function pushStartStaticIsland(
+  target: Array<Chunk | PrecomputedChunk>,
+  renderState: RenderState,
+): number {
+  if (renderState.generateStaticMarkup) {
+    // Static markup is not hydrated.
+    return -1;
+  }
+  return pushStartStaticIslandImpl(target, renderState);
+}
+
+export function pushEndStaticIsland(
+  target: Array<Chunk | PrecomputedChunk>,
+  renderState: RenderState,
+  startIndex: number,
+  isStatic: boolean,
+  textEmbeddedBefore: boolean,
+): void {
+  if (renderState.generateStaticMarkup) {
+    return;
+  }
+  pushEndStaticIslandImpl(
+    target,
+    renderState,
+    startIndex,
+    isStatic,
+    textEmbeddedBefore,
+  );
 }
 
 export function writeStartCompletedSuspenseBoundary(

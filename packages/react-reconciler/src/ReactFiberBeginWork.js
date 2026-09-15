@@ -265,6 +265,7 @@ import {
   tryToClaimNextHydratableBlockInstance,
   enterHydrationStateOfBlockSlot,
   claimNextHydratableActivityInstance,
+  tryToClaimNextHydratableStaticIslandInstance,
   claimNextHydratableSuspenseInstance,
   warnIfHydrating,
   queueHydrationError,
@@ -284,6 +285,7 @@ import {
   createWorkInProgress,
   isSimpleFunctionComponent,
   isFunctionClassComponent,
+  isStaticIslandFiber,
 } from './ReactFiber';
 import {
   scheduleUpdateOnFiber,
@@ -993,6 +995,12 @@ function mountDehydratedActivityComponent(
   activityInstance: ActivityInstance,
   renderLanes: Lanes,
 ): null | Fiber {
+  if (isStaticIslandFiber(workInProgress)) {
+    // A static island's server HTML needs no hydration: it has no state,
+    // effects, refs, context reads or event handlers. It stays dehydrated
+    // until an update or a move requires hydrating or client rendering it.
+    return null;
+  }
   // During the first pass, we'll bail out and not drill into the children.
   // Instead, we'll leave the content in place and try to hydrate it later.
   // We'll continue hydrating the rest at offscreen priority since we'll already
@@ -1013,6 +1021,19 @@ function updateDehydratedActivityComponent(
   // We'll handle suspending since if something suspends we can just leave
   // it dehydrated. We push early and then pop if we enter non-dehydrated attempts.
   pushDehydratedActivitySuspenseHandler(workInProgress);
+  if (
+    !didSuspend &&
+    isStaticIslandFiber(workInProgress) &&
+    (workInProgress.flags & Placement) !== NoFlags
+  ) {
+    // A dehydrated boundary's DOM is not moved by placement: render a moved
+    // static island on the client.
+    return retryActivityComponentWithoutHydrating(
+      current,
+      workInProgress,
+      renderLanes,
+    );
+  }
   if (!didSuspend) {
     // This is the first render pass. Attempt to hydrate.
 
@@ -1197,6 +1218,20 @@ function updateActivityComponent(
         primaryChildFragment.memoizedState = nextState;
 
         return bailoutOffscreenComponent(null, primaryChildFragment);
+      } else if (isStaticIslandFiber(workInProgress)) {
+        const dehydrated =
+          tryToClaimNextHydratableStaticIslandInstance(workInProgress);
+        if (dehydrated === null) {
+          // The server rendered content that needs hydration: hydrate it like
+          // the children of any boundary-less component.
+          return mountActivityChildren(workInProgress, nextProps, renderLanes);
+        }
+        pushDehydratedActivitySuspenseHandler(workInProgress);
+        return mountDehydratedActivityComponent(
+          workInProgress,
+          dehydrated,
+          renderLanes,
+        );
       } else {
         // We must push the suspense handler context *before* attempting to
         // hydrate, to avoid a mismatch in case it errors.

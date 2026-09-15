@@ -43,6 +43,7 @@ import {
   ActivityComponent,
   SuspenseComponent,
 } from 'react-reconciler/src/ReactWorkTags';
+import {isStaticIslandFiber} from 'react-reconciler/src/ReactFiber';
 import {isHigherEventPriority} from 'react-reconciler/src/ReactEventPriorities';
 import {isRootDehydrated} from 'react-reconciler/src/ReactFiberShellHydration';
 import {dispatchReplayedFormAction} from './plugins/FormActionEventPlugin';
@@ -334,7 +335,7 @@ function attemptExplicitHydrationTarget(
         }
       } else if (tag === ActivityComponent) {
         const instance = getActivityInstanceFromFiber(nearestMounted);
-        if (instance !== null) {
+        if (instance !== null && !isStaticIslandFiber(nearestMounted)) {
           // We're blocked on hydrating this boundary.
           // Increase its priority.
           queuedTarget.blockedOn = instance;

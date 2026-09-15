@@ -284,6 +284,10 @@ const SUPPRESS_HYDRATION_WARNING = 'suppressHydrationWarning';
 
 const ACTIVITY_START_DATA = '&';
 const ACTIVITY_END_DATA = '/&';
+// A static island (enableStaticIslands) is claimed like an Activity boundary and
+// stays dehydrated.
+const STATIC_ISLAND_START_DATA = '~';
+const STATIC_ISLAND_END_DATA = '/~';
 const SUSPENSE_START_DATA = '$';
 const SUSPENSE_END_DATA = '/$';
 const SUSPENSE_PENDING_START_DATA = '$?';
@@ -1257,7 +1261,11 @@ function clearHydrationBoundary(
     parentInstance.removeChild(node);
     if (nextNode && nextNode.nodeType === COMMENT_NODE) {
       const data = (nextNode as any).data as string;
-      if (data === SUSPENSE_END_DATA || data === ACTIVITY_END_DATA) {
+      if (
+        data === SUSPENSE_END_DATA ||
+        data === ACTIVITY_END_DATA ||
+        data === STATIC_ISLAND_END_DATA
+      ) {
         if (depth === 0) {
           parentInstance.removeChild(nextNode);
           // Retry if any event replaying was blocked on this.
@@ -1271,7 +1279,8 @@ function clearHydrationBoundary(
         data === SUSPENSE_PENDING_START_DATA ||
         data === SUSPENSE_QUEUED_START_DATA ||
         data === SUSPENSE_FALLBACK_START_DATA ||
-        data === ACTIVITY_START_DATA
+        data === ACTIVITY_START_DATA ||
+        data === STATIC_ISLAND_START_DATA
       ) {
         depth++;
       } else if (data === PREAMBLE_CONTRIBUTION_HTML) {
@@ -1382,7 +1391,11 @@ function hideOrUnhideDehydratedBoundary(
     }
     if (nextNode && nextNode.nodeType === COMMENT_NODE) {
       const data = (nextNode as any).data as string;
-      if (data === SUSPENSE_END_DATA) {
+      if (
+        data === SUSPENSE_END_DATA ||
+        data === ACTIVITY_END_DATA ||
+        data === STATIC_ISLAND_END_DATA
+      ) {
         if (depth === 0) {
           return;
         } else {
@@ -1392,7 +1405,9 @@ function hideOrUnhideDehydratedBoundary(
         data === SUSPENSE_START_DATA ||
         data === SUSPENSE_PENDING_START_DATA ||
         data === SUSPENSE_QUEUED_START_DATA ||
-        data === SUSPENSE_FALLBACK_START_DATA
+        data === SUSPENSE_FALLBACK_START_DATA ||
+        data === ACTIVITY_START_DATA ||
+        data === STATIC_ISLAND_START_DATA
       ) {
         depth++;
       }
@@ -4315,9 +4330,26 @@ export function canHydrateSuspenseInstance(
   );
   if (
     hydratableInstance !== null &&
-    hydratableInstance.data !== ACTIVITY_START_DATA
+    hydratableInstance.data !== ACTIVITY_START_DATA &&
+    hydratableInstance.data !== STATIC_ISLAND_START_DATA
   ) {
     return hydratableInstance as any;
+  }
+  return null;
+}
+
+// The start of a static island, if `instance` is one: an ActivityInstance that
+// a static island's fiber claims. The server renders the content of an island
+// that needs hydration without these comments, so nothing is skipped to find
+// one.
+export function canHydrateStaticIslandInstance(
+  instance: HydratableInstance,
+): null | ActivityInstance {
+  if (
+    instance.nodeType === COMMENT_NODE &&
+    (instance as any).data === STATIC_ISLAND_START_DATA
+  ) {
+    return instance as any;
   }
   return null;
 }
@@ -4453,12 +4485,17 @@ function getNextHydratable(node: ?Node) {
         data === SUSPENSE_PENDING_START_DATA ||
         data === SUSPENSE_QUEUED_START_DATA ||
         data === ACTIVITY_START_DATA ||
+        data === STATIC_ISLAND_START_DATA ||
         data === FORM_STATE_IS_MATCHING ||
         data === FORM_STATE_IS_NOT_MATCHING
       ) {
         break;
       }
-      if (data === SUSPENSE_END_DATA || data === ACTIVITY_END_DATA) {
+      if (
+        data === SUSPENSE_END_DATA ||
+        data === ACTIVITY_END_DATA ||
+        data === STATIC_ISLAND_END_DATA
+      ) {
         return null;
       }
     }
@@ -4557,6 +4594,12 @@ export function describeHydratableInstanceForDevWarnings(
     if (instance.data === ACTIVITY_START_DATA) {
       return {
         type: 'Activity',
+        props: {},
+      };
+    }
+    if (instance.data === STATIC_ISLAND_START_DATA) {
+      return {
+        type: 'StaticIsland',
         props: {},
       };
     }
@@ -4676,7 +4719,11 @@ function getNextHydratableInstanceAfterHydrationBoundary(
   while (node) {
     if (node.nodeType === COMMENT_NODE) {
       const data = (node as any).data as string;
-      if (data === SUSPENSE_END_DATA || data === ACTIVITY_END_DATA) {
+      if (
+        data === SUSPENSE_END_DATA ||
+        data === ACTIVITY_END_DATA ||
+        data === STATIC_ISLAND_END_DATA
+      ) {
         if (depth === 0) {
           return getNextHydratableSibling(node as any);
         } else {
@@ -4687,7 +4734,8 @@ function getNextHydratableInstanceAfterHydrationBoundary(
         data === SUSPENSE_FALLBACK_START_DATA ||
         data === SUSPENSE_PENDING_START_DATA ||
         data === SUSPENSE_QUEUED_START_DATA ||
-        data === ACTIVITY_START_DATA
+        data === ACTIVITY_START_DATA ||
+        data === STATIC_ISLAND_START_DATA
       ) {
         depth++;
       }
@@ -4696,6 +4744,66 @@ function getNextHydratableInstanceAfterHydrationBoundary(
   }
   // TODO: Warn, we didn't find the end comment boundary.
   return null;
+}
+
+// Static islands (enableStaticIslands) stay dehydrated. In development, the
+// React DOM root module provides a verifier that hydrates a copy of an island's
+// server HTML with its children and reports mismatches.
+let staticIslandVerifierInDEV:
+  | null
+  | ((container: Element, children: mixed) => void) = null;
+
+export function setStaticIslandVerifierInDEV(
+  verifier: (container: Element, children: mixed) => void,
+): void {
+  if (__DEV__) {
+    staticIslandVerifierInDEV = verifier;
+  }
+}
+
+export function verifyDehydratedStaticIslandInDEV(
+  activityInstance: ActivityInstance,
+  children: mixed,
+): void {
+  if (!__DEV__ || staticIslandVerifierInDEV === null) {
+    return;
+  }
+  const parent: null | Element = activityInstance.parentNode as any;
+  if (parent === null || parent.nodeType !== ELEMENT_NODE) {
+    return;
+  }
+  // A copy of the island's content, in an element like its parent (so that it
+  // is parsed in the same namespace).
+  const container: Element = parent.cloneNode(false) as any;
+  let depth = 0;
+  let node: null | Node = activityInstance.nextSibling;
+  while (node !== null) {
+    if (node.nodeType === COMMENT_NODE) {
+      const data = (node as any).data as string;
+      if (
+        data === SUSPENSE_END_DATA ||
+        data === ACTIVITY_END_DATA ||
+        data === STATIC_ISLAND_END_DATA
+      ) {
+        if (depth === 0) {
+          break;
+        }
+        depth--;
+      } else if (
+        data === SUSPENSE_START_DATA ||
+        data === SUSPENSE_PENDING_START_DATA ||
+        data === SUSPENSE_QUEUED_START_DATA ||
+        data === SUSPENSE_FALLBACK_START_DATA ||
+        data === ACTIVITY_START_DATA ||
+        data === STATIC_ISLAND_START_DATA
+      ) {
+        depth++;
+      }
+    }
+    container.appendChild(node.cloneNode(true));
+    node = node.nextSibling;
+  }
+  staticIslandVerifierInDEV(container, children);
 }
 
 export function getNextHydratableInstanceAfterActivityInstance(
@@ -4729,14 +4837,19 @@ export function getParentHydrationBoundary(
         data === SUSPENSE_FALLBACK_START_DATA ||
         data === SUSPENSE_PENDING_START_DATA ||
         data === SUSPENSE_QUEUED_START_DATA ||
-        data === ACTIVITY_START_DATA
+        data === ACTIVITY_START_DATA ||
+        data === STATIC_ISLAND_START_DATA
       ) {
         if (depth === 0) {
           return node as any as SuspenseInstance | ActivityInstance;
         } else {
           depth--;
         }
-      } else if (data === SUSPENSE_END_DATA || data === ACTIVITY_END_DATA) {
+      } else if (
+        data === SUSPENSE_END_DATA ||
+        data === ACTIVITY_END_DATA ||
+        data === STATIC_ISLAND_END_DATA
+      ) {
         depth++;
       }
     }

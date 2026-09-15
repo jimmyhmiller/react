@@ -101,6 +101,13 @@ export const enableContextSelectors = __EXPERIMENTAL__;
  */
 export const enableUpdateSlicing = __EXPERIMENTAL__;
 
+/**
+ * Static islands: subtrees that need no hydration stay dehydrated (like an
+ * Activity boundary that is never hydrated unless an update or a move reaches
+ * it). Emitted by the (Rust) React Compiler; see compiler/docs/experiments.
+ */
+export const enableStaticIslands = __EXPERIMENTAL__;
+
 // Support thenables with status 'pending_weak' in Flight. A weak-pending
 // thenable doesn't keep the stream open; if it resolves before the stream
 // closes for other reasons, its value is emitted, otherwise its reference is

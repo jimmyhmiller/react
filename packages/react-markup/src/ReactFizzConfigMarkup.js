@@ -187,6 +187,25 @@ export function pushEndActivityBoundary(
   return;
 }
 
+export function pushStartStaticIsland(
+  target: Array<Chunk | PrecomputedChunk>,
+  renderState: RenderState,
+): number {
+  // Markup is not hydrated.
+  return -1;
+}
+
+export function pushEndStaticIsland(
+  target: Array<Chunk | PrecomputedChunk>,
+  renderState: RenderState,
+  startIndex: number,
+  isStatic: boolean,
+  textEmbeddedBefore: boolean,
+): void {
+  // Markup is not hydrated.
+  return;
+}
+
 export function writeStartCompletedSuspenseBoundary(
   destination: Destination,
   renderState: RenderState,

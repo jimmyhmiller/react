@@ -40,6 +40,7 @@ import type {
 import type {ContextSnapshot} from './ReactFizzNewContext';
 import type {ComponentStackNode} from './ReactFizzComponentStack';
 import type {TreeContext} from './ReactFizzTreeContext';
+import type {Dispatcher} from 'react-reconciler/src/ReactInternalTypes';
 import type {
   BlockTemplate,
   BlockNodeDescription,
@@ -107,6 +108,8 @@ import {
   isPreambleReady,
   isPreambleContext,
   canRenderBlockTemplate,
+  pushStartStaticIsland,
+  pushEndStaticIsland,
   hasSuspenseyContent,
 } from './ReactFizzConfig';
 import {
@@ -182,6 +185,7 @@ import {
   REACT_VIEW_TRANSITION_TYPE,
   REACT_BLOCK_TEMPLATE_TYPE,
   REACT_ACTIVITY_TYPE,
+  REACT_STATIC_ISLAND_TYPE,
   REACT_OPTIMISTIC_KEY,
   REACT_RECOVERABLE_TYPE,
 } from 'shared/ReactSymbols';
@@ -197,6 +201,7 @@ import {
   enableAsyncDebugInfo,
   enableCPUSuspense,
   enableCompiledBlocks,
+  enableStaticIslands,
 } from 'shared/ReactFeatureFlags';
 
 import assign from 'shared/assign';
@@ -3095,13 +3100,12 @@ function renderBlock(
   }
   const values: $ReadOnlyArray<mixed> = props.v;
   const root = template.description;
-  renderHostElement(
-    request,
-    task,
-    keyPath,
-    root[0],
-    getBlockNodeProps(root, values),
-  );
+  const rootProps = getBlockNodeProps(root, values);
+  if (enableStaticIslands && staticIslands.length > 0) {
+    // The block's other elements are rendered through renderElement.
+    checkStaticIslandElement(root[0], rootProps);
+  }
+  renderHostElement(request, task, keyPath, root[0], rootProps);
 }
 
 function getBlockNodeProps(
@@ -3183,6 +3187,180 @@ function createBlockElement(type: mixed, props: Object): mixed {
   return element;
 }
 
+// Static islands (enableStaticIslands). The server decides whether the content
+// of an `unstable_StaticIsland` needs hydration: it does unless its render calls
+// no hook (other than the compiler's memo cache), renders only function
+// components, host elements without event handlers, refs or hydration-sensitive
+// props and tags, fragments, text and nested islands, and does not suspend.
+// Only static content is delimited as an island, which the client leaves
+// dehydrated; other content is rendered as is and hydrated normally.
+
+// The stack of static islands being rendered: whether each is still static.
+const staticIslands: Array<{isStatic: boolean}> = [];
+
+function markStaticIslandsInteractive(): void {
+  for (let i = 0; i < staticIslands.length; i++) {
+    staticIslands[i].isStatic = false;
+  }
+}
+
+let staticIslandHooksDispatcher: null | Dispatcher = null;
+
+// The hooks dispatcher inside static islands: every hook makes the islands
+// interactive, except the memo cache of compiled components.
+function getStaticIslandHooksDispatcher(): Dispatcher {
+  if (staticIslandHooksDispatcher === null) {
+    const dispatcher: any = {};
+    const base: any = HooksDispatcher;
+    for (const name in base) {
+      const hook = base[name];
+      dispatcher[name] =
+        name === 'useMemoCache' || typeof hook !== 'function'
+          ? hook
+          : (...args: Array<any>) => {
+              markStaticIslandsInteractive();
+              return hook(...args);
+            };
+    }
+    staticIslandHooksDispatcher = dispatcher;
+  }
+  return staticIslandHooksDispatcher as any;
+}
+
+// Host elements whose hydration attaches listeners or state, or that are
+// hoisted or singletons.
+const hydrationSensitiveTags: Set<string> = new Set([
+  'input',
+  'select',
+  'textarea',
+  'option',
+  'form',
+  'img',
+  'image',
+  'video',
+  'audio',
+  'source',
+  'iframe',
+  'object',
+  'embed',
+  'link',
+  'script',
+  'style',
+  'title',
+  'meta',
+  'base',
+  'details',
+  'dialog',
+  'html',
+  'head',
+  'body',
+]);
+
+function checkStaticIslandElement(type: any, props: Object): void {
+  if (typeof type === 'function') {
+    if (shouldConstruct(type)) {
+      markStaticIslandsInteractive();
+    }
+    return;
+  }
+  if (typeof type === 'string') {
+    if (type.indexOf('-') !== -1 || hydrationSensitiveTags.has(type)) {
+      markStaticIslandsInteractive();
+      return;
+    }
+    for (const name in props) {
+      const value = props[name];
+      if (
+        name === 'ref' ||
+        name === 'autoFocus' ||
+        name === 'popover' ||
+        name === 'popoverTarget' ||
+        name === 'formAction'
+      ) {
+        if (value != null) {
+          markStaticIslandsInteractive();
+          return;
+        }
+      } else if (
+        typeof value === 'function' &&
+        name.length > 2 &&
+        name.charCodeAt(0) === 111 /* o */ &&
+        name.charCodeAt(1) === 110 /* n */
+      ) {
+        markStaticIslandsInteractive();
+        return;
+      }
+    }
+    return;
+  }
+  if (
+    type === REACT_FRAGMENT_TYPE ||
+    type === REACT_STATIC_ISLAND_TYPE ||
+    (typeof type === 'object' &&
+      type !== null &&
+      type.$$typeof === REACT_BLOCK_TEMPLATE_TYPE)
+  ) {
+    // Blocks render as host elements, which are checked (see renderBlock).
+    return;
+  }
+  markStaticIslandsInteractive();
+}
+
+function renderStaticIsland(
+  request: Request,
+  task: Task,
+  keyPath: KeyNode,
+  props: Object,
+): void {
+  const segment = task.blockedSegment;
+  if (segment === null) {
+    // Replay: the island was delimited, or not, when it was prerendered.
+    const prevKeyPath = task.keyPath;
+    task.keyPath = keyPath;
+    renderNode(request, task, props.children, -1);
+    task.keyPath = prevKeyPath;
+    return;
+  }
+  const textEmbeddedBefore = segment.lastPushedText;
+  const startIndex = pushStartStaticIsland(segment.chunks, request.renderState);
+  segment.lastPushedText = false;
+  const island = {isStatic: true};
+  staticIslands.push(island);
+  const prevDispatcher = ReactSharedInternals.H;
+  ReactSharedInternals.H = getStaticIslandHooksDispatcher();
+  const childSegments = segment.children.length;
+  const prevKeyPath = task.keyPath;
+  task.keyPath = keyPath;
+  try {
+    renderNode(request, task, props.children, -1);
+  } finally {
+    task.keyPath = prevKeyPath;
+    ReactSharedInternals.H = prevDispatcher;
+    staticIslands.pop();
+  }
+  // Content that suspended was split into other segments.
+  const isStatic =
+    island.isStatic &&
+    task.blockedSegment === segment &&
+    segment.children.length === childSegments;
+  if (!isStatic) {
+    markStaticIslandsInteractive();
+  }
+  if (startIndex === -1) {
+    return;
+  }
+  pushEndStaticIsland(
+    segment.chunks,
+    request.renderState,
+    startIndex,
+    isStatic,
+    textEmbeddedBefore,
+  );
+  if (isStatic) {
+    segment.lastPushedText = false;
+  }
+}
+
 function renderElement(
   request: Request,
   task: Task,
@@ -3191,6 +3369,9 @@ function renderElement(
   props: Object,
   ref: any,
 ): void {
+  if (enableStaticIslands && staticIslands.length > 0) {
+    checkStaticIslandElement(type, props);
+  }
   if (typeof type === 'function') {
     if (shouldConstruct(type)) {
       renderClassComponent(request, task, keyPath, type, props);
@@ -3232,6 +3413,16 @@ function renderElement(
     // $FlowFixMe[invalid-compare]
     case REACT_ACTIVITY_TYPE: {
       renderActivity(request, task, keyPath, props);
+      return;
+    }
+    // $FlowFixMe[invalid-compare]
+    case REACT_STATIC_ISLAND_TYPE: {
+      if (!enableStaticIslands) {
+        throw new Error(
+          'Static islands are not enabled in this build of React.',
+        );
+      }
+      renderStaticIsland(request, task, keyPath, props);
       return;
     }
     // $FlowFixMe[invalid-compare]

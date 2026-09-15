@@ -355,6 +355,11 @@ const ReactNoopServer = ReactFizzServer({
   canRenderBlockTemplate() {
     return false;
   },
+  // Static islands are rendered as their content.
+  pushStartStaticIsland(target: Array<Uint8Array>): number {
+    return -1;
+  },
+  pushEndStaticIsland() {},
 });
 
 type Options = {

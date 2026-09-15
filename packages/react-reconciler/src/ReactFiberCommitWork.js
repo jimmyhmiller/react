@@ -164,6 +164,7 @@ import {
   clearSuspenseBoundaryFromContainer,
   createContainerChildSet,
   clearContainer,
+  verifyDehydratedStaticIslandInDEV,
   commitHydratedBlockInstance,
   prepareScopeUpdate,
   prepareForCommit,
@@ -263,6 +264,7 @@ import {
   commitHostSingletonAcquisition,
   commitHostSingletonRelease,
 } from './ReactFiberCommitHostEffects';
+import {isStaticIslandFiber} from './ReactFiber';
 import {
   commitFragmentInstanceDeletionEffects,
   commitFragmentInstanceInsertionEffects,
@@ -764,6 +766,20 @@ function commitLayoutEffectOnFiber(
       );
       if (flags & Update) {
         commitActivityHydrationCallbacks(finishedRoot, finishedWork);
+        if (
+          __DEV__ &&
+          current === null &&
+          isStaticIslandFiber(finishedWork) &&
+          finishedWork.memoizedState !== null
+        ) {
+          // A static island stays dehydrated. In development, its server HTML
+          // is checked against its children.
+          const activityState: ActivityState = finishedWork.memoizedState;
+          verifyDehydratedStaticIslandInDEV(
+            activityState.dehydrated,
+            finishedWork.memoizedProps.children,
+          );
+        }
       }
       break;
     }

@@ -35,7 +35,10 @@ import {
 
 import {createCapturedValueAtFiber} from './ReactCapturedValue';
 
-import {createFiberFromDehydratedFragment} from './ReactFiber';
+import {
+  createFiberFromDehydratedFragment,
+  isStaticIslandFiber,
+} from './ReactFiber';
 import {
   shouldSetTextContent,
   supportsHydration,
@@ -61,6 +64,7 @@ import {
   canHydrateInstance,
   canHydrateTextInstance,
   canHydrateActivityInstance,
+  canHydrateStaticIslandInstance,
   canHydrateSuspenseInstance,
   canHydrateFormStateMarker,
   isFormStateMarkerMatching,
@@ -334,27 +338,52 @@ function tryHydrateActivity(
   );
   // $FlowFixMe[invalid-compare]
   if (activityInstance !== null) {
-    const activityState: ActivityState = {
-      dehydrated: activityInstance,
-      treeContext: getSuspendedTreeContext(),
-      retryLane: OffscreenLane,
-      hydrationErrors: null,
-    };
-    fiber.memoizedState = activityState;
-    // Store the dehydrated fragment as a child fiber.
-    // This simplifies the code for getHostSibling and deleting nodes,
-    // since it doesn't have to consider all Suspense boundaries and
-    // check if they're dehydrated ones or not.
-    const dehydratedFragment =
-      createFiberFromDehydratedFragment(activityInstance);
-    dehydratedFragment.return = fiber;
-    fiber.child = dehydratedFragment;
-    hydrationParentFiber = fiber;
-    // While an Activity Instance does have children, we won't step into
-    // it during the first pass. Instead, we'll reenter it later.
-    nextHydratableInstance = null;
+    claimActivityInstance(fiber, activityInstance);
   }
   return activityInstance;
+}
+
+// A static island (an ActivityComponent fiber) claims the next hydratable
+// instance if the server rendered its content as an island. Otherwise, its
+// children are hydrated like any content.
+function tryToClaimNextHydratableStaticIslandInstance(
+  fiber: Fiber,
+): null | ActivityInstance {
+  if (!isHydrating || nextHydratableInstance === null) {
+    return null;
+  }
+  const activityInstance = canHydrateStaticIslandInstance(
+    nextHydratableInstance,
+  );
+  if (activityInstance !== null) {
+    claimActivityInstance(fiber, activityInstance);
+  }
+  return activityInstance;
+}
+
+function claimActivityInstance(
+  fiber: Fiber,
+  activityInstance: ActivityInstance,
+): void {
+  const activityState: ActivityState = {
+    dehydrated: activityInstance,
+    treeContext: getSuspendedTreeContext(),
+    retryLane: OffscreenLane,
+    hydrationErrors: null,
+  };
+  fiber.memoizedState = activityState;
+  // Store the dehydrated fragment as a child fiber.
+  // This simplifies the code for getHostSibling and deleting nodes,
+  // since it doesn't have to consider all Suspense boundaries and
+  // check if they're dehydrated ones or not.
+  const dehydratedFragment =
+    createFiberFromDehydratedFragment(activityInstance);
+  dehydratedFragment.return = fiber;
+  fiber.child = dehydratedFragment;
+  hydrationParentFiber = fiber;
+  // While an Activity Instance does have children, we won't step into
+  // it during the first pass. Instead, we'll reenter it later.
+  nextHydratableInstance = null;
 }
 
 function tryHydrateSuspense(
@@ -753,8 +782,19 @@ function popToNextHostParent(fiber: Fiber): void {
   hydrationParentFiber = fiber.return;
   while (hydrationParentFiber) {
     switch (hydrationParentFiber.tag) {
-      case HostComponent:
       case ActivityComponent:
+        if (
+          isStaticIslandFiber(hydrationParentFiber) &&
+          hydrationParentFiber.memoizedState === null
+        ) {
+          // A static island whose content the server did not delimit is not a
+          // hydration boundary: its children are hydrated in its parent.
+          hydrationParentFiber = hydrationParentFiber.return;
+          break;
+        }
+        rootOrSingletonContext = false;
+        return;
+      case HostComponent:
       case SuspenseComponent:
       case HostBlock:
       case HostBlockSlot:
@@ -1088,6 +1128,7 @@ function popHydrationStateOfBlock(
 }
 
 export {
+  tryToClaimNextHydratableStaticIslandInstance,
   tryToClaimNextHydratableBlockInstance,
   enterHydrationStateOfBlockSlot,
   popHydrationStateOfBlockSlot,

@@ -19,7 +19,13 @@ import {REACT_ELEMENT_TYPE} from 'shared/ReactSymbols';
 import {
   disableCommentsAsDOMContainers,
   enableDefaultTransitionIndicator,
+  enableStaticIslands,
 } from 'shared/ReactFeatureFlags';
+import {setStaticIslandVerifierInDEV} from 'react-dom-bindings/src/client/ReactFiberConfigDOM';
+import {
+  unstable_scheduleCallback as scheduleCallback,
+  unstable_IdlePriority as IdlePriority,
+} from 'scheduler';
 
 export type RootType = {
   render(children: ReactNodeList): void,
@@ -358,6 +364,31 @@ export function hydrateRoot(
 
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   return new ReactDOMHydrationRoot(root);
+}
+
+if (__DEV__ && enableStaticIslands) {
+  // A static island stays dehydrated (see verifyDehydratedStaticIslandInDEV).
+  // In development, a copy of its server HTML is hydrated with its children in
+  // a separate root, which reports hydration mismatches, and then unmounted.
+  setStaticIslandVerifierInDEV((container, children) => {
+    const verificationRoot = hydrateRoot(container, children as any, {
+      onRecoverableError(error: mixed) {
+        if (__DEV__) {
+          console.error(
+            "A static island's server-rendered HTML does not match its children " +
+              'on the client. Static islands are not hydrated, so the server HTML ' +
+              'is kept.\n\n%s',
+            // eslint-disable-next-line react-internal/safe-string-coercion
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      },
+    });
+    // After the verification root has hydrated.
+    scheduleCallback(IdlePriority, () => {
+      verificationRoot.unmount();
+    });
+  });
 }
 
 function warnIfReactDOMContainerInDEV(container: any) {

@@ -94,6 +94,8 @@ export const createPreambleState = $$$config.createPreambleState;
 export const canHavePreamble = $$$config.canHavePreamble;
 export const isPreambleContext = $$$config.isPreambleContext;
 export const canRenderBlockTemplate = $$$config.canRenderBlockTemplate;
+export const pushStartStaticIsland = $$$config.pushStartStaticIsland;
+export const pushEndStaticIsland = $$$config.pushEndStaticIsland;
 export const isPreambleReady = $$$config.isPreambleReady;
 export const hoistPreambleState = $$$config.hoistPreambleState;
 

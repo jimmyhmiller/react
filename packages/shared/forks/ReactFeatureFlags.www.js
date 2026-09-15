@@ -75,6 +75,7 @@ export const enableAsyncIterableChildren: boolean = false;
 export const enableCompiledBlocks: boolean = false;
 export const enableContextSelectors: boolean = false;
 export const enableUpdateSlicing: boolean = false;
+export const enableStaticIslands: boolean = false;
 export const enableFlightWeakThenables: boolean = false;
 
 export const enableTaint: boolean = false;

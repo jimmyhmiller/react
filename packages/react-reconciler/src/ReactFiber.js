@@ -48,6 +48,7 @@ import {
   enableSuspenseyImages,
   enableOptimisticKey,
   enableCompiledBlocks,
+  enableStaticIslands,
 } from 'shared/ReactFeatureFlags';
 import {NoFlags, Placement, StaticMask} from './ReactFiberFlags';
 import {ConcurrentRoot} from './ReactRootTags';
@@ -111,6 +112,7 @@ import {
   REACT_ELEMENT_TYPE,
   REACT_VIEW_TRANSITION_TYPE,
   REACT_ACTIVITY_TYPE,
+  REACT_STATIC_ISLAND_TYPE,
 } from 'shared/ReactSymbols';
 import {TransitionTracingMarker} from './ReactFiberTracingMarkerComponent';
 import {getHostContext} from './ReactFiberHostContext';
@@ -642,6 +644,12 @@ export function createFiberFromTypeAndProps(
           return createFiberFromTracingMarker(pendingProps, mode, lanes, key);
         }
       // Fall through
+      // $FlowFixMe[invalid-compare]
+      case REACT_STATIC_ISLAND_TYPE:
+        if (enableStaticIslands) {
+          return createFiberFromStaticIsland(pendingProps, mode, lanes, key);
+        }
+      // Fall through
       default: {
         if (
           enableCompiledBlocks &&
@@ -876,6 +884,25 @@ export function createFiberFromActivity(
   fiber.elementType = REACT_ACTIVITY_TYPE;
   fiber.lanes = lanes;
   return fiber;
+}
+
+// A static island is an Activity boundary that is always visible (its props
+// have no mode) and that is not hydrated unless it has to be (see
+// isStaticIslandFiber).
+export function createFiberFromStaticIsland(
+  pendingProps: {children: ReactNodeList},
+  mode: TypeOfMode,
+  lanes: Lanes,
+  key: ReactKey,
+): Fiber {
+  const fiber = createFiber(ActivityComponent, pendingProps, key, mode);
+  fiber.elementType = REACT_STATIC_ISLAND_TYPE;
+  fiber.lanes = lanes;
+  return fiber;
+}
+
+export function isStaticIslandFiber(fiber: Fiber): boolean {
+  return enableStaticIslands && fiber.elementType === REACT_STATIC_ISLAND_TYPE;
 }
 
 export function createFiberFromViewTransition(

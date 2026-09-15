@@ -35,6 +35,10 @@ export const REACT_BLOCK_TEMPLATE_TYPE: symbol = Symbol.for(
 );
 
 export const REACT_ACTIVITY_TYPE: symbol = Symbol.for('react.activity');
+// A subtree that needs no hydration (enableStaticIslands).
+export const REACT_STATIC_ISLAND_TYPE: symbol = Symbol.for(
+  'react.static_island',
+);
 export const REACT_LEGACY_HIDDEN_TYPE: symbol = Symbol.for(
   'react.legacy_hidden',
 );

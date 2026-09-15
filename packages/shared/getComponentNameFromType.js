@@ -25,6 +25,7 @@ import {
   REACT_TRACING_MARKER_TYPE,
   REACT_VIEW_TRANSITION_TYPE,
   REACT_ACTIVITY_TYPE,
+  REACT_STATIC_ISLAND_TYPE,
 } from 'shared/ReactSymbols';
 
 import {
@@ -82,6 +83,8 @@ export default function getComponentNameFromType(type: mixed): string | null {
       return 'SuspenseList';
     case REACT_ACTIVITY_TYPE:
       return 'Activity';
+    case REACT_STATIC_ISLAND_TYPE:
+      return 'StaticIsland';
     case REACT_VIEW_TRANSITION_TYPE:
       if (enableViewTransition) {
         return 'ViewTransition';

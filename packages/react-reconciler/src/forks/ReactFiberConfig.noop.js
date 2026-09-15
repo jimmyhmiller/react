@@ -218,6 +218,10 @@ export const hydrateActivityInstance = $$$config.hydrateActivityInstance;
 export const hydrateSuspenseInstance = $$$config.hydrateSuspenseInstance;
 export const getNextHydratableInstanceAfterActivityInstance =
   $$$config.getNextHydratableInstanceAfterActivityInstance;
+export const verifyDehydratedStaticIslandInDEV =
+  $$$config.verifyDehydratedStaticIslandInDEV;
+export const canHydrateStaticIslandInstance =
+  $$$config.canHydrateStaticIslandInstance;
 export const getNextHydratableInstanceAfterSuspenseInstance =
   $$$config.getNextHydratableInstanceAfterSuspenseInstance;
 export const commitHydratedInstance = $$$config.commitHydratedInstance;

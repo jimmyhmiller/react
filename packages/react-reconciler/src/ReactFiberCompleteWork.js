@@ -170,6 +170,7 @@ import {
   popTopLevelContextObject as popTopLevelLegacyContextObject,
 } from './ReactFiberLegacyContext';
 import {popProvider} from './ReactFiberNewContext';
+import {isStaticIslandFiber} from './ReactFiber';
 import {
   prepareToHydrateHostInstance,
   prepareToHydrateHostTextInstance,
@@ -1087,6 +1088,11 @@ function completeDehydratedActivityBoundary(
         );
       }
       prepareToHydrateHostActivityInstance(workInProgress);
+      if (__DEV__ && isStaticIslandFiber(workInProgress)) {
+        // Verifies the island's server HTML in the commit (see
+        // commitLayoutEffectOnFiber).
+        workInProgress.flags |= Update;
+      }
       bubbleProperties(workInProgress);
       if (enableProfilerTimer) {
         if ((workInProgress.mode & ProfileMode) !== NoMode) {
