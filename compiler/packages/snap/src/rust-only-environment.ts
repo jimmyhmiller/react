@@ -17,6 +17,7 @@ const RUST_ONLY_ENVIRONMENT_FLAGS: ReadonlyArray<string> = [
   'enableJsxBlocks',
   'enableListItemMemoization',
   'enableContextSelectors',
+  'enableUpdateSlicing',
 ];
 
 export function assertRustOnlyEnvironmentFlag(flag: string): void {

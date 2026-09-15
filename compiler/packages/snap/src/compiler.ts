@@ -304,6 +304,7 @@ export async function transformFixtureInput(
       'enableJsxBlocks',
       'enableListItemMemoization',
       'enableContextSelectors',
+      'enableUpdateSlicing',
     ].some(
       flag => rustOnlyPragma[flag] === true || forcedRustFlags.includes(flag),
     );

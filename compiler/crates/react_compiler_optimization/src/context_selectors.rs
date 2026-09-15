@@ -75,14 +75,24 @@ pub trait ContextSelectorImports {
     fn use_context_paths(&mut self) -> NonLocalBinding;
     fn start_selected_hook(&mut self) -> NonLocalBinding;
     fn select_hook_paths(&mut self) -> NonLocalBinding;
+    /// `unstable_skipStoreHookN` for a call with `argument_count` (at most
+    /// `MAX_SLICED_HOOK_ARGUMENTS`) arguments.
+    fn skip_store_hook(&mut self, argument_count: usize) -> NonLocalBinding;
 }
 
-/// Rewrites the selectable context reads of a component or hook. Returns the
-/// number of rewritten reads.
+/// The most arguments of a hook call that update slicing calls through the
+/// runtime (`unstable_skipStoreHook0` to `unstable_skipStoreHook3`).
+const MAX_SLICED_HOOK_ARGUMENTS: usize = 3;
+
+/// Rewrites the selectable context reads of a component or hook. With
+/// `update_slicing`, every call of a custom hook (selected or not) is also made
+/// through the runtime (see "Update slicing" above). Returns the number of
+/// rewritten reads and calls.
 pub fn select_context_reads(
     func: &mut HirFunction,
     env: &mut Environment,
     imports: &mut dyn ContextSelectorImports,
+    update_slicing: bool,
 ) -> usize {
     if !matches!(
         func.fn_type,
@@ -100,13 +110,15 @@ pub fn select_context_reads(
     let index = FunctionIndex::build(func, env, &unconditional);
     let mut plans = Vec::new();
     for site in sites {
-        if let Some(entries) = analyze(func, env, &index, &site) {
-            plans.push((site, entries));
+        let entries = analyze(func, env, &index, &site);
+        let sliced = update_slicing && site.kind == SiteKind::Hook && site.argument_count <= MAX_SLICED_HOOK_ARGUMENTS;
+        if entries.is_some() || sliced {
+            plans.push((site, entries, sliced));
         }
     }
     let count = plans.len();
-    for (site, entries) in plans {
-        rewrite(func, env, imports, &site, &entries);
+    for (site, entries, sliced) in plans {
+        rewrite(func, env, imports, &site, entries.as_deref(), sliced);
     }
     if count > 0 {
         mark_instruction_ids(&mut func.body, &mut func.instructions);
@@ -199,6 +211,7 @@ struct Site {
     block: BlockId,
     instruction: InstructionId,
     value: IdentifierId,
+    argument_count: usize,
 }
 
 fn find_sites(func: &HirFunction, env: &Environment) -> Vec<Site> {
@@ -241,6 +254,7 @@ fn find_sites(func: &HirFunction, env: &Environment) -> Vec<Site> {
                 block: block.id,
                 instruction: *instr_id,
                 value: instr.lvalue.identifier,
+                argument_count: args.len(),
             });
         }
     }
@@ -790,11 +804,12 @@ fn rewrite(
     env: &mut Environment,
     imports: &mut dyn ContextSelectorImports,
     site: &Site,
-    entries: &[Entry],
+    entries: Option<&[Entry]>,
+    sliced: bool,
 ) {
     let mut before: Vec<InstructionId> = Vec::new();
     let mut descriptor: Vec<Place> = Vec::new();
-    for entry in entries {
+    for entry in entries.unwrap_or_default() {
         let mut elements: Vec<Place> = Vec::new();
         let keys = match entry {
             Entry::Read(keys) => {
@@ -834,7 +849,12 @@ fn rewrite(
         }
         descriptor.push(array(func, env, &mut before, elements));
     }
-    let descriptor = array(func, env, &mut before, descriptor);
+    // An unselected hook call (only made through the runtime for update
+    // slicing) is described by `null`.
+    let descriptor = match entries {
+        Some(_) => array(func, env, &mut before, descriptor),
+        None => primitive(func, env, &mut before, PrimitiveValue::Null),
+    };
 
     let mut after: Vec<InstructionId> = Vec::new();
     match site.kind {
@@ -892,6 +912,51 @@ fn rewrite(
                     loc: None,
                 },
             );
+            if sliced {
+                // `const value = useX(...args)` becomes
+                // `const skipped = unstable_skipStoreHookN(started, useX, ...args);
+                // const value = skipped !== useX ? skipped : useX(...args)`: the
+                // runtime returns the hook itself unless React skipped the call.
+                // The call keeps its callee (for validation and for the error of
+                // calling a value that is not a function) and gets `skipped` as
+                // an extra argument, which codegen turns into the conditional.
+                let skip = imports.skip_store_hook(site.argument_count);
+                let skip_callee = load_global(func, env, &mut before, skip, hook_type.clone());
+                let skipped = temporary(env, Type::Poly);
+                let skipped_name = env.generate_globally_unique_identifier_name(Some("skippedHook"));
+                env.identifiers[skipped.identifier.0 as usize].name =
+                    Some(react_compiler_hir::IdentifierName::Named(skipped_name));
+                let (hook_args, callee_id) = {
+                    let InstructionValue::CallExpression { callee, args, .. } =
+                        &func.instructions[site.instruction.0 as usize].value
+                    else {
+                        unreachable!("hook sites are calls");
+                    };
+                    (args.clone(), callee.identifier)
+                };
+                let mut skip_args = vec![
+                    PlaceOrSpread::Place(snapshot.clone()),
+                    PlaceOrSpread::Place(hook.clone()),
+                ];
+                skip_args.extend(hook_args);
+                push_instruction(
+                    func,
+                    &mut before,
+                    skipped.clone(),
+                    InstructionValue::CallExpression {
+                        callee: skip_callee,
+                        args: skip_args,
+                        loc: None,
+                    },
+                );
+                let InstructionValue::CallExpression { args, .. } =
+                    &mut func.instructions[site.instruction.0 as usize].value
+                else {
+                    unreachable!("hook sites are calls");
+                };
+                args.push(PlaceOrSpread::Place(skipped));
+                env.add_sliced_hook_callee(callee_id);
+            }
             let select = imports.select_hook_paths();
             let select_callee = load_global(func, env, &mut after, select, hook_type);
             let result = temporary(env, Type::Poly);

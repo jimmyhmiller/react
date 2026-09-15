@@ -212,6 +212,14 @@ pub struct EnvironmentConfig {
     /// `compiler/docs/experiments/0003-context-selectors.md`.
     #[serde(default)]
     pub enable_context_selectors: bool,
+
+    /// Rust compiler only, with `enable_context_selectors`. Call custom hooks
+    /// through react/compiler-runtime, so that React can skip calls of store
+    /// hooks whose arguments are unchanged (requires a React build with
+    /// `enableUpdateSlicing`). See
+    /// `compiler/docs/experiments/0004-update-slicing.md`.
+    #[serde(default)]
+    pub enable_update_slicing: bool,
 }
 
 impl Default for EnvironmentConfig {
@@ -259,6 +267,7 @@ impl Default for EnvironmentConfig {
             enable_jsx_blocks: false,
             enable_list_item_memoization: false,
             enable_context_selectors: false,
+            enable_update_slicing: false,
             custom_macros: None,
         }
     }

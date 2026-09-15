@@ -670,6 +670,17 @@ export function getNextContextDependency(
   return dependencies === null ? null : dependencies.firstContext;
 }
 
+// Whether the value of a dependency's context is still the value it read.
+export function isContextDependencyUnchanged(
+  dependency: ContextDependency<mixed>,
+): boolean {
+  // $FlowFixMe[constant-condition]
+  const value = isPrimaryRenderer
+    ? dependency.context._currentValue
+    : dependency.context._currentValue2;
+  return is(value, dependency.memoizedValue);
+}
+
 // Gives a context dependency recorded in this render a selector, as if it had
 // been read with readContextWithSelector.
 export function setContextDependencySelector(

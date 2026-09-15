@@ -327,10 +327,12 @@ pub fn compile_fn(
         let mut imports = RuntimeImports {
             context: &mut *context,
         };
+        let update_slicing = env.config.enable_update_slicing;
         *selected_context_reads = react_compiler_optimization::context_selectors::select_context_reads(
             &mut hir,
             &mut env,
             &mut imports,
+            update_slicing,
         );
         context.timing.stop();
 
@@ -2097,5 +2099,15 @@ impl react_compiler_optimization::context_selectors::ContextSelectorImports
 
     fn select_hook_paths(&mut self) -> react_compiler_hir::NonLocalBinding {
         self.binding("unstable_selectHookPaths")
+    }
+
+    fn skip_store_hook(&mut self, argument_count: usize) -> react_compiler_hir::NonLocalBinding {
+        self.binding(match argument_count {
+            0 => "unstable_skipStoreHook0",
+            1 => "unstable_skipStoreHook1",
+            2 => "unstable_skipStoreHook2",
+            3 => "unstable_skipStoreHook3",
+            _ => panic!("SelectContextReads: no runtime function calls a hook with {argument_count} arguments"),
+        })
     }
 }

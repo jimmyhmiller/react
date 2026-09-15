@@ -2275,13 +2275,21 @@ fn codegen_base_instruction_value(
             loc: _,
         } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
-            let arguments = args
+            let mut arguments: Vec<Expression> = args
                 .iter()
                 .map(|arg| codegen_argument(cx, arg))
                 .collect::<Result<_, _>>()?;
+            // Update slicing: the last argument is the value returned by
+            // `unstable_skipStoreHookN`, which is the hook itself if the call
+            // was not skipped.
+            let skipped = if cx.env.is_sliced_hook_callee(callee.identifier) {
+                arguments.pop()
+            } else {
+                None
+            };
             let call_expr = Expression::CallExpression(ast_expr::CallExpression {
                 base: BaseNode::typed("CallExpression"),
-                callee: Box::new(callee_expr),
+                callee: Box::new(callee_expr.clone()),
                 arguments,
                 type_parameters: None,
                 type_arguments: None,
@@ -2289,6 +2297,20 @@ fn codegen_base_instruction_value(
             });
             // enableEmitHookGuards: wrap hook calls in try/finally IIFE
             let result = maybe_wrap_hook_call(cx, call_expr, callee.identifier);
+            let result = match skipped {
+                Some(skipped) => Expression::ConditionalExpression(ast_expr::ConditionalExpression {
+                    base: BaseNode::typed("ConditionalExpression"),
+                    test: Box::new(Expression::BinaryExpression(ast_expr::BinaryExpression {
+                        base: BaseNode::typed("BinaryExpression"),
+                        operator: AstBinaryOperator::StrictNeq,
+                        left: Box::new(skipped.clone()),
+                        right: Box::new(callee_expr),
+                    })),
+                    consequent: Box::new(skipped),
+                    alternate: Box::new(result),
+                }),
+                None => result,
+            };
             Ok(ExpressionOrJsxText::Expression(result))
         }
         InstructionValue::MethodCall {

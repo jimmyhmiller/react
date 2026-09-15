@@ -418,9 +418,16 @@ export type Dispatcher = {
   unstable_startSelectedHook(kind: 1 | 2): void,
   unstable_selectHookResult<T>(
     value: T,
-    changed: (previous: T, next: T, argument: mixed) => boolean,
+    changed: null | ((previous: T, next: T, argument: mixed) => boolean),
     argument: mixed,
   ): T,
+  unstable_skipStoreHook(
+    hook: Function,
+    argumentCount: number,
+    argument0: mixed,
+    argument1: mixed,
+    argument2: mixed,
+  ): mixed,
   useRef<T>(initialValue: T): {current: T},
   useEffect(
     create: () => (() => void) | void,

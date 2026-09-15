@@ -93,6 +93,14 @@ export const enableCompiledBlocks = __EXPERIMENTAL__;
  */
 export const enableContextSelectors = __EXPERIMENTAL__;
 
+/**
+ * Update slicing: calls of registered store hooks whose inputs are unchanged
+ * are skipped, and React applies the store's new snapshot to the hooks of the
+ * previous render. Requires enableContextSelectors. Emitted by the (Rust)
+ * React Compiler; see compiler/docs/experiments.
+ */
+export const enableUpdateSlicing = __EXPERIMENTAL__;
+
 // Support thenables with status 'pending_weak' in Flight. A weak-pending
 // thenable doesn't keep the stream open; if it resolves before the stream
 // closes for other reasons, its value is emitted, otherwise its reference is

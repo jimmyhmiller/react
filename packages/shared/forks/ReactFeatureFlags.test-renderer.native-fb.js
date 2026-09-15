@@ -23,6 +23,7 @@ export const enableAsyncDebugInfo = true;
 export const enableAsyncIterableChildren = false;
 export const enableCompiledBlocks = false;
 export const enableContextSelectors = false;
+export const enableUpdateSlicing = false;
 export const enableFlightWeakThenables = false;
 export const enableCPUSuspense = true;
 export const enableCreateEventHandleAPI = false;

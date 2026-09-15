@@ -50,6 +50,12 @@ export const REACT_MEMO_CACHE_SENTINEL: symbol = Symbol.for(
 // describing which items differ from the list it produced before.
 export const REACT_LIST_CHANGES: symbol = Symbol.for('react.list_changes');
 
+// Returned by the dispatcher's unstable_skipStoreHook when a store hook call
+// must be made (enableUpdateSlicing).
+export const REACT_STORE_HOOK_NOT_SKIPPED: symbol = Symbol.for(
+  'react.store_hook_not_skipped',
+);
+
 export const REACT_VIEW_TRANSITION_TYPE: symbol = Symbol.for(
   'react.view_transition',
 );

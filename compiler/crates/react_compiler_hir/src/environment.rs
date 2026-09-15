@@ -117,6 +117,11 @@ pub struct Environment {
     /// Values the compiled function places into block slots (set by
     /// `CompileJsxBlocks`).
     block_slot_values: FxHashSet<IdentifierId>,
+    /// Callees of hook calls made through update slicing (set by
+    /// `SelectContextReads`): the call's last argument is the value returned by
+    /// `unstable_skipStoreHookN`, and codegen emits
+    /// `skipped !== useX ? skipped : useX(...args)`.
+    sliced_hook_callees: FxHashSet<IdentifierId>,
     /// Nested functions whose every returned value is a block element (set by
     /// `CompileJsxBlocks`).
     block_functions: FxHashSet<FunctionId>,
@@ -227,6 +232,7 @@ impl Environment {
             block_template_names: FxHashMap::default(),
             returns_block: ReturnsBlock::No,
             block_slot_values: FxHashSet::default(),
+            sliced_hook_callees: FxHashSet::default(),
             block_functions: FxHashSet::default(),
             list_item_callbacks: FxHashMap::default(),
             registers_context_hook: false,
@@ -282,6 +288,7 @@ impl Environment {
             block_template_names: self.block_template_names.clone(),
             returns_block: ReturnsBlock::No,
             block_slot_values: FxHashSet::default(),
+            sliced_hook_callees: FxHashSet::default(),
             block_functions: FxHashSet::default(),
             list_item_callbacks: FxHashMap::default(),
             registers_context_hook: false,
@@ -1068,6 +1075,14 @@ impl Environment {
 
     pub fn block_slot_values(&self) -> &FxHashSet<IdentifierId> {
         &self.block_slot_values
+    }
+
+    pub fn add_sliced_hook_callee(&mut self, callee: IdentifierId) {
+        self.sliced_hook_callees.insert(callee);
+    }
+
+    pub fn is_sliced_hook_callee(&self, callee: IdentifierId) -> bool {
+        self.sliced_hook_callees.contains(&callee)
     }
 
     pub fn add_block_function(&mut self, func: FunctionId) {

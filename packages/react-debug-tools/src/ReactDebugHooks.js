@@ -36,6 +36,7 @@ import {
   REACT_MEMO_CACHE_SENTINEL,
   REACT_CONTEXT_TYPE,
   REACT_RECOVERABLE_TYPE,
+  REACT_STORE_HOOK_NOT_SKIPPED,
 } from 'shared/ReactSymbols';
 import hasOwnProperty from 'shared/hasOwnProperty';
 
@@ -793,6 +794,9 @@ const Dispatcher: DispatcherType = {
   unstable_startSelectedHook(kind: 1 | 2): void {},
   unstable_selectHookResult<T>(value: T): T {
     return value;
+  },
+  unstable_skipStoreHook(): mixed {
+    return REACT_STORE_HOOK_NOT_SKIPPED;
   },
   useEffect,
   useImperativeHandle,

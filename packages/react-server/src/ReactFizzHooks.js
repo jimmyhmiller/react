@@ -45,6 +45,7 @@ import {
   REACT_CONTEXT_TYPE,
   REACT_RECOVERABLE_TYPE,
   REACT_MEMO_CACHE_SENTINEL,
+  REACT_STORE_HOOK_NOT_SKIPPED,
 } from 'shared/ReactSymbols';
 import {checkAttributeStringCoercion} from 'shared/CheckStringCoercion';
 import {getFormState} from './ReactFizzServer';
@@ -407,10 +408,21 @@ function startSelectedHook(kind: 1 | 2): void {}
 
 function selectHookResult<T>(
   value: T,
-  changed: (previous: T, next: T, argument: mixed) => boolean,
+  changed: null | ((previous: T, next: T, argument: mixed) => boolean),
   argument: mixed,
 ): T {
   return value;
+}
+
+// A server render has no previous render to skip a store hook call from.
+function skipStoreHook(
+  hook: Function,
+  argumentCount: number,
+  argument0: mixed,
+  argument1: mixed,
+  argument2: mixed,
+): mixed {
+  return REACT_STORE_HOOK_NOT_SKIPPED;
 }
 
 // A server render does not re-render when context values change, so the
@@ -909,6 +921,7 @@ export const HooksDispatcher: Dispatcher = supportsClientAPIs
       unstable_useContextWithSelector: useContextWithSelector,
       unstable_startSelectedHook: startSelectedHook,
       unstable_selectHookResult: selectHookResult,
+      unstable_skipStoreHook: skipStoreHook,
       useMemo,
       useReducer,
       useRef,
@@ -943,6 +956,7 @@ export const HooksDispatcher: Dispatcher = supportsClientAPIs
       unstable_useContextWithSelector: useContextWithSelector,
       unstable_startSelectedHook: startSelectedHook,
       unstable_selectHookResult: selectHookResult,
+      unstable_skipStoreHook: skipStoreHook,
       useEffect: clientHookNotSupported,
       useImperativeHandle: clientHookNotSupported,
       useInsertionEffect: clientHookNotSupported,

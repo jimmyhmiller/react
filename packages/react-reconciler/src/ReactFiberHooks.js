@@ -45,11 +45,13 @@ import {
   enableViewTransition,
   enableGestureTransition,
   enableContextSelectors,
+  enableUpdateSlicing,
 } from 'shared/ReactFeatureFlags';
 import {
   REACT_CONTEXT_TYPE,
   REACT_RECOVERABLE_TYPE,
   REACT_MEMO_CACHE_SENTINEL,
+  REACT_STORE_HOOK_NOT_SKIPPED,
 } from 'shared/ReactSymbols';
 
 import {
@@ -88,6 +90,7 @@ import {
   getLastContextDependency,
   getNextContextDependency,
   setContextDependencySelector,
+  isContextDependencyUnchanged,
 } from './ReactFiberNewContext';
 import {HostRoot, CacheComponent, HostComponent} from './ReactWorkTags';
 import {
@@ -266,6 +269,40 @@ export type FunctionComponentUpdateQueue = {
   events: Array<EventFunctionPayload<any, any, any>> | null,
   stores: Array<StoreConsistencyCheck<any>> | null,
   memoCache: MemoCache | null,
+  // The verified calls of registered store hooks of the render, by position
+  // among its selected store hook calls (enableUpdateSlicing).
+  storeCalls: Array<StoreHookCall | null> | null,
+};
+
+// A call of a registered store hook, verified by selectHookResult, and what the
+// call created in its render (enableUpdateSlicing). A later render can skip the
+// same call if its arguments are unchanged (see skipStoreHook).
+type StoreHookCall = {
+  hook: Function,
+  // The number of arguments, or -1 if the call cannot be skipped.
+  argumentCount: number,
+  argument0: mixed,
+  argument1: mixed,
+  argument2: mixed,
+  firstHook: Hook,
+  lastHook: Hook,
+  firstEffect: Effect | null,
+  lastEffect: Effect | null,
+  firstDependency: ContextDependency<mixed> | null,
+  lastDependency: ContextDependency<mixed> | null,
+  // The call's useSyncExternalStore: its hook, updateStoreInstance effect,
+  // store instance and functions.
+  storeHook: Hook,
+  storeEffect: Effect,
+  inst: StoreInstance<any>,
+  subscribe: (() => void) => () => void,
+  getSnapshot: () => any,
+  // Whether a hook of the call other than its useSyncExternalStore has an
+  // update queue (whose pending updates prevent skipping the call).
+  hasUpdateQueues: boolean,
+  // The number of hooks the call made, in development (for the hook order
+  // check).
+  hookCallCountDev: number,
 };
 
 type BasicStateAction<S> = (S => S) | S;
@@ -325,6 +362,7 @@ let ignorePreviousDependencies: boolean = false;
 
 function mountHookTypesDev(): void {
   if (__DEV__) {
+    hookCallCountDev++;
     const hookName = currentHookNameInDev as any as HookType;
 
     if (hookTypesDev === null) {
@@ -337,6 +375,7 @@ function mountHookTypesDev(): void {
 
 function updateHookTypesDev(): void {
   if (__DEV__) {
+    hookCallCountDev++;
     const hookName = currentHookNameInDev as any as HookType;
 
     if (hookTypesDev !== null) {
@@ -718,6 +757,10 @@ function finishRenderingHooks<Props, SecondArg>(
 
   thenableIndexCounter = 0;
   thenableState = null;
+  storeCallCounter = 0;
+  if (__DEV__) {
+    hookCallCountDev = 0;
+  }
 
   if (didRenderTooFewHooks) {
     throw new Error(
@@ -831,6 +874,10 @@ function renderWithHooksAgain<Props, SecondArg>(
       thenableState = null;
     }
     thenableIndexCounter = 0;
+    storeCallCounter = 0;
+    if (__DEV__) {
+      hookCallCountDev = 0;
+    }
     didScheduleRenderPhaseUpdateDuringThisPass = false;
 
     if (numberOfReRenders >= RE_RENDER_LIMIT) {
@@ -957,6 +1004,15 @@ export function resetHooksAfterThrow(): void {
   selectedStoreInstance = null;
   selectedStoreSnapshot = null;
   selectedStoreSubscribe = null;
+  selectedStoreGetSnapshot = null;
+  selectedStoreHook = null;
+  selectedStoreEffect = null;
+  selectedEffect = null;
+  selectedCallHook = null;
+  selectedSkippedCall = null;
+  selectedCallArgument0 = undefined;
+  selectedCallArgument1 = undefined;
+  selectedCallArgument2 = undefined;
 
   // We can assume the previous dispatcher is always this one, since we set it
   // at the beginning of the render phase and there's no re-entrance.
@@ -1001,6 +1057,10 @@ export function resetHooksOnUnwind(workInProgress: Fiber): void {
   localIdCounter = 0;
   thenableIndexCounter = 0;
   thenableState = null;
+  storeCallCounter = 0;
+  if (__DEV__) {
+    hookCallCountDev = 0;
+  }
 }
 
 function mountWorkInProgressHook(): Hook {
@@ -1101,6 +1161,7 @@ function createFunctionComponentUpdateQueue(): FunctionComponentUpdateQueue {
     events: null,
     stores: null,
     memoCache: null,
+    storeCalls: null,
   };
 }
 
@@ -1110,6 +1171,7 @@ function resetFunctionComponentUpdateQueue(
   updateQueue.lastEffect = null;
   updateQueue.events = null;
   updateQueue.stores = null;
+  updateQueue.storeCalls = null;
   if (updateQueue.memoCache != null) {
     // NOTE: this function intentionally does not reset memoCache data. We reuse updateQueue for the memo
     // cache to avoid increasing the size of fibers that don't need a cache, but we don't want to reset
@@ -1741,9 +1803,6 @@ function mountSyncExternalStore<T>(
     changedArgument: null,
   };
   hook.queue = inst;
-  if (enableContextSelectors && selectedHookFiber === fiber) {
-    recordSelectedStore(inst, nextSnapshot, subscribe, true);
-  }
 
   // Schedule an effect to subscribe to the store.
   mountEffect(subscribeToStore.bind(null, fiber, inst, subscribe), [subscribe]);
@@ -1760,8 +1819,24 @@ function mountSyncExternalStore<T>(
     updateStoreInstance.bind(null, fiber, inst, nextSnapshot, getSnapshot),
     null,
   );
+  if (enableContextSelectors && selectedHookFiber === fiber) {
+    recordSelectedStore(
+      inst,
+      nextSnapshot,
+      subscribe,
+      getSnapshot,
+      hook,
+      getLastEffect(fiber),
+      true,
+    );
+  }
 
   return nextSnapshot;
+}
+
+function getLastEffect(fiber: Fiber): Effect {
+  const queue: FunctionComponentUpdateQueue = fiber.updateQueue as any;
+  return queue.lastEffect as any;
 }
 
 function updateSyncExternalStore<T>(
@@ -1806,9 +1881,6 @@ function updateSyncExternalStore<T>(
     markWorkInProgressReceivedUpdate();
   }
   const inst = hook.queue;
-  if (enableContextSelectors && selectedHookFiber === fiber) {
-    recordSelectedStore(inst, nextSnapshot, subscribe, false);
-  }
 
   updateEffect(subscribeToStore.bind(null, fiber, inst, subscribe), [
     subscribe,
@@ -1840,6 +1912,17 @@ function updateSyncExternalStore<T>(
     updateStoreInstance.bind(null, fiber, inst, nextSnapshot, getSnapshot),
     null,
   );
+  if (enableContextSelectors && selectedHookFiber === fiber) {
+    recordSelectedStore(
+      inst,
+      nextSnapshot,
+      subscribe,
+      getSnapshot,
+      hook,
+      getLastEffect(fiber),
+      false,
+    );
+  }
 
   if (storeChanged) {
     fiber.flags |= PassiveEffect;
@@ -4133,7 +4216,30 @@ let selectedStoreCount: number = 0;
 let selectedStoreInstance: StoreInstance<any> | null = null;
 let selectedStoreSnapshot: mixed = null;
 let selectedStoreSubscribe: null | ((() => void) => () => void) = null;
+let selectedStoreGetSnapshot: null | (() => mixed) = null;
+let selectedStoreHook: Hook | null = null;
+let selectedStoreEffect: Effect | null = null;
 let selectedStoreMounted: boolean = false;
+// What a selected store hook call may create that a skipped call could not
+// reproduce (enableUpdateSlicing).
+let selectedStoreCallIndex: number = -1;
+let selectedEffect: Effect | null = null;
+let selectedThenableIndex: number = 0;
+let selectedEventCount: number = 0;
+let selectedMemoCacheIndex: number = 0;
+let selectedHookCallCountDev: number = 0;
+// The arguments of the call, set by skipStoreHook.
+let selectedCallHook: Function | null = null;
+let selectedCallArgumentCount: number = -1;
+let selectedCallArgument0: mixed = undefined;
+let selectedCallArgument1: mixed = undefined;
+let selectedCallArgument2: mixed = undefined;
+// The call of the current render that skipStoreHook copied, if it did.
+let selectedSkippedCall: StoreHookCall | null = null;
+// The number of selected store hook calls made by the rendering component.
+let storeCallCounter: number = 0;
+// The number of hooks called by the rendering component, in development.
+let hookCallCountDev: number = 0;
 
 function startSelectedHook(kind: 1 | 2): void {
   selectedHookKind = kind;
@@ -4144,18 +4250,43 @@ function startSelectedHook(kind: 1 | 2): void {
   selectedStoreInstance = null;
   selectedStoreSnapshot = null;
   selectedStoreSubscribe = null;
+  selectedStoreGetSnapshot = null;
+  selectedStoreHook = null;
+  selectedStoreEffect = null;
+  selectedCallHook = null;
+  selectedSkippedCall = null;
+  if (enableUpdateSlicing && kind === SelectedStoreHook) {
+    selectedStoreCallIndex = storeCallCounter++;
+    const queue: FunctionComponentUpdateQueue | null =
+      currentlyRenderingFiber.updateQueue as any;
+    selectedEffect = queue === null ? null : queue.lastEffect;
+    selectedEventCount =
+      queue === null || queue.events === null ? 0 : queue.events.length;
+    selectedMemoCacheIndex =
+      queue === null || queue.memoCache == null ? 0 : queue.memoCache.index;
+    selectedThenableIndex = thenableIndexCounter;
+    if (__DEV__) {
+      selectedHookCallCountDev = hookCallCountDev;
+    }
+  }
 }
 
 function recordSelectedStore<T>(
   inst: StoreInstance<T>,
   snapshot: T,
   subscribe: (() => void) => () => void,
+  getSnapshot: () => T,
+  hook: Hook,
+  effect: Effect,
   mounted: boolean,
 ): void {
   selectedStoreCount++;
   selectedStoreInstance = inst;
   selectedStoreSnapshot = snapshot;
   selectedStoreSubscribe = subscribe;
+  selectedStoreGetSnapshot = getSnapshot;
+  selectedStoreHook = hook;
+  selectedStoreEffect = effect;
   selectedStoreMounted = mounted;
 }
 
@@ -4167,14 +4298,15 @@ function recordSelectedStore<T>(
 //
 // Store hooks (hooks of external store libraries that return the snapshot of
 // the one useSyncExternalStore they call, for every snapshot): if the call
-// read exactly one store and returned its snapshot, the comparison is used
-// when the store notifies the component. It is committed with the render, as
-// the store instance is shared by renders.
+// read exactly one store and returned its snapshot, the comparison (if any) is
+// used when the store notifies the component. It is committed with the render,
+// as the store instance is shared by renders. The call is recorded, so that
+// the next render can skip it (see skipStoreHook).
 //
 // Otherwise nothing changes.
 function selectHookResult<T>(
   value: T,
-  changed: (previous: T, next: T, argument: mixed) => boolean,
+  changed: null | ((previous: T, next: T, argument: mixed) => boolean),
   argument: mixed,
 ): T {
   const kind = selectedHookKind;
@@ -4197,7 +4329,7 @@ function selectHookResult<T>(
     return value;
   }
   if (kind === SelectedContextHook) {
-    if (hook !== workInProgressHook) {
+    if (hook !== workInProgressHook || changed === null) {
       return value;
     }
     const dependency = getLastContextDependency();
@@ -4219,8 +4351,11 @@ function selectHookResult<T>(
     if (selected && subscribe !== null) {
       sharedStoreSubscribes.add(subscribe);
     }
+    if (enableUpdateSlicing && selected) {
+      recordStoreHookCall(fiber, hook, previousDependency, inst, subscribe);
+    }
     const nextChanged = selected ? changed : null;
-    const nextArgument = selected ? argument : null;
+    const nextArgument = selected && changed !== null ? argument : null;
     if (selectedStoreMounted) {
       // The instance was created by this render.
       inst.changed = nextChanged as any;
@@ -4241,6 +4376,331 @@ function selectHookResult<T>(
   return value;
 }
 
+function hasUpdateQueues(
+  firstHook: Hook,
+  lastHook: Hook,
+  inst: StoreInstance<any>,
+): boolean {
+  let hook = firstHook;
+  while (true) {
+    if (hook.queue !== null && hook.queue !== inst) {
+      return true;
+    }
+    if (hook === lastHook || hook.next === null) {
+      return false;
+    }
+    hook = hook.next;
+  }
+}
+
+// Records a verified store hook call in the work-in-progress update queue.
+function recordStoreHookCall(
+  fiber: Fiber,
+  hookBefore: Hook | null,
+  dependencyBefore: ContextDependency<mixed> | null,
+  inst: StoreInstance<any>,
+  subscribe: null | ((() => void) => () => void),
+): void {
+  const storeHook = selectedStoreHook;
+  const storeEffect = selectedStoreEffect;
+  const getSnapshot = selectedStoreGetSnapshot;
+  const lastHook = workInProgressHook;
+  const queue: FunctionComponentUpdateQueue | null = fiber.updateQueue as any;
+  if (
+    storeHook === null ||
+    storeEffect === null ||
+    getSnapshot === null ||
+    subscribe === null ||
+    lastHook === null ||
+    queue === null
+  ) {
+    return;
+  }
+  const firstHook: Hook =
+    hookBefore === null ? fiber.memoizedState : (hookBefore.next as any);
+  const lastEffect = queue.lastEffect;
+  const firstEffect =
+    lastEffect === selectedEffect || lastEffect === null
+      ? null
+      : selectedEffect === null
+        ? lastEffect.next
+        : selectedEffect.next;
+  const lastDependency = getLastContextDependency();
+  const firstDependency =
+    lastDependency === dependencyBefore
+      ? null
+      : getNextContextDependency(fiber, dependencyBefore);
+  // A call that used `use`, effect events or a memo cache cannot be skipped:
+  // their state is indexed by call position.
+  const skippable =
+    selectedCallHook !== null &&
+    thenableIndexCounter === selectedThenableIndex &&
+    (queue.events === null ? 0 : queue.events.length) === selectedEventCount &&
+    (queue.memoCache == null ? 0 : queue.memoCache.index) ===
+      selectedMemoCacheIndex;
+  const call: StoreHookCall = {
+    hook: selectedCallHook as any,
+    argumentCount: skippable ? selectedCallArgumentCount : -1,
+    argument0: selectedCallArgument0,
+    argument1: selectedCallArgument1,
+    argument2: selectedCallArgument2,
+    firstHook,
+    lastHook,
+    firstEffect,
+    lastEffect: firstEffect === null ? null : lastEffect,
+    firstDependency,
+    lastDependency: firstDependency === null ? null : lastDependency,
+    storeHook,
+    storeEffect,
+    inst,
+    subscribe,
+    getSnapshot,
+    hasUpdateQueues:
+      selectedSkippedCall !== null
+        ? selectedSkippedCall.hasUpdateQueues
+        : hasUpdateQueues(firstHook, lastHook, inst),
+    hookCallCountDev: __DEV__ ? hookCallCountDev - selectedHookCallCountDev : 0,
+  };
+  selectedSkippedCall = null;
+  let calls = queue.storeCalls;
+  if (calls === null) {
+    calls = queue.storeCalls = [];
+  }
+  while (calls.length < selectedStoreCallIndex) {
+    calls.push(null);
+  }
+  calls[selectedStoreCallIndex] = call;
+}
+
+// Called after startSelectedHook for a registered store hook, before calling
+// the hook. Returns REACT_STORE_HOOK_NOT_SKIPPED if the hook must be called.
+// Otherwise the call is skipped: the same call of the current render had the
+// same arguments, none of its hooks has pending updates and none of the
+// contexts it read changed, so calling the hook would compute the same hooks
+// and effects, except for the store's snapshot. The hooks and effects are
+// copied from the current render and updated with the new snapshot, as
+// updateSyncExternalStore does, and the new snapshot is returned (a store hook
+// returns its snapshot).
+function skipStoreHook(
+  hook: Function,
+  argumentCount: number,
+  argument0: mixed,
+  argument1: mixed,
+  argument2: mixed,
+): mixed {
+  const fiber = currentlyRenderingFiber;
+  if (
+    !enableUpdateSlicing ||
+    selectedHookKind !== SelectedStoreHook ||
+    selectedHookFiber !== fiber
+  ) {
+    return REACT_STORE_HOOK_NOT_SKIPPED;
+  }
+  selectedCallHook = hook;
+  selectedCallArgumentCount = argumentCount;
+  selectedCallArgument0 = argument0;
+  selectedCallArgument1 = argument1;
+  selectedCallArgument2 = argument2;
+
+  const current = fiber.alternate;
+  const dispatcher = ReactSharedInternals.H;
+  if (
+    current === null ||
+    getIsHydrating() ||
+    !(
+      dispatcher === HooksDispatcherOnUpdate ||
+      (__DEV__ && dispatcher === HooksDispatcherOnUpdateInDEV)
+    ) ||
+    (__DEV__ && (fiber.mode & StrictLegacyMode) !== NoMode)
+  ) {
+    return REACT_STORE_HOOK_NOT_SKIPPED;
+  }
+  const currentQueue: FunctionComponentUpdateQueue | null =
+    current.updateQueue as any;
+  const calls = currentQueue === null ? null : currentQueue.storeCalls;
+  const call =
+    calls !== null && selectedStoreCallIndex < calls.length
+      ? calls[selectedStoreCallIndex]
+      : null;
+  if (
+    call === null ||
+    call.hook !== hook ||
+    call.argumentCount !== argumentCount ||
+    (argumentCount > 0 && !is(call.argument0, argument0)) ||
+    (argumentCount > 1 && !is(call.argument1, argument1)) ||
+    (argumentCount > 2 && !is(call.argument2, argument2))
+  ) {
+    return REACT_STORE_HOOK_NOT_SKIPPED;
+  }
+  // The next hooks to update must be the hooks of the call.
+  const nextCurrentHook =
+    currentHook === null ? current.memoizedState : currentHook.next;
+  const nextWorkInProgressHook =
+    workInProgressHook === null ? fiber.memoizedState : workInProgressHook.next;
+  if (nextCurrentHook !== call.firstHook || nextWorkInProgressHook !== null) {
+    return REACT_STORE_HOOK_NOT_SKIPPED;
+  }
+  const inst = call.inst;
+  if (call.hasUpdateQueues) {
+    let hookToCheck: Hook = call.firstHook;
+    while (true) {
+      const queue: any = hookToCheck.queue;
+      if (
+        hookToCheck.baseQueue !== null ||
+        (queue !== null && queue !== inst && queue.pending !== null)
+      ) {
+        return REACT_STORE_HOOK_NOT_SKIPPED;
+      }
+      if (hookToCheck === call.lastHook) {
+        break;
+      }
+      hookToCheck = hookToCheck.next as any;
+    }
+  }
+  let dependency = call.firstDependency;
+  while (dependency !== null) {
+    if (!isContextDependencyUnchanged(dependency)) {
+      return REACT_STORE_HOOK_NOT_SKIPPED;
+    }
+    if (dependency === call.lastDependency) {
+      break;
+    }
+    dependency = dependency.next;
+  }
+  const getSnapshot = call.getSnapshot;
+  if (inst.getSnapshot !== getSnapshot) {
+    // The current render's passive effects have not run yet.
+    return REACT_STORE_HOOK_NOT_SKIPPED;
+  }
+  let nextSnapshot;
+  try {
+    nextSnapshot = getSnapshot();
+  } catch (error) {
+    return REACT_STORE_HOOK_NOT_SKIPPED;
+  }
+  if (nextSnapshot === hook) {
+    // The compiled code tells a skipped call from a call to make by comparing
+    // the returned value with the hook.
+    return REACT_STORE_HOOK_NOT_SKIPPED;
+  }
+
+  // Read the contexts again.
+  dependency = call.firstDependency;
+  while (dependency !== null) {
+    readContext(dependency.context);
+    if (dependency === call.lastDependency) {
+      break;
+    }
+    dependency = dependency.next;
+  }
+  // Copy the effects without HasEffect: their deps are unchanged. The copies
+  // are consecutive in the effect list, in the same order.
+  const lastEffect = call.lastEffect;
+  let firstCopiedEffect: Effect | null = null;
+  let nextStoreEffect: Effect | null = null;
+  let effect = call.firstEffect;
+  while (effect !== null) {
+    const copy = pushEffectImpl({
+      tag: effect.tag & ~HookHasEffect,
+      inst: effect.inst,
+      create: effect.create,
+      deps: effect.deps,
+      // $FlowFixMe[incompatible-type]: set by pushEffectImpl.
+      next: null,
+    });
+    if (firstCopiedEffect === null) {
+      firstCopiedEffect = copy;
+    }
+    if (effect === call.storeEffect) {
+      nextStoreEffect = copy;
+    }
+    if (effect === lastEffect) {
+      break;
+    }
+    effect = effect.next;
+  }
+  // Copy the hooks, pointing effect hooks at the copied effects.
+  let nextStoreHook: Hook | null = null;
+  let hookToCopy: Hook = call.firstHook;
+  while (true) {
+    let memoizedState = hookToCopy.memoizedState;
+    if (hookToCopy.queue === null && firstCopiedEffect !== null) {
+      // Effect hooks have no queue.
+      let previous: Effect = call.firstEffect as any;
+      let copy: Effect = firstCopiedEffect;
+      while (true) {
+        if (previous === memoizedState) {
+          memoizedState = copy;
+          break;
+        }
+        if (previous === lastEffect) {
+          break;
+        }
+        previous = previous.next;
+        copy = copy.next;
+      }
+    }
+    const newHook: Hook = {
+      memoizedState,
+      baseState: hookToCopy.baseState,
+      baseQueue: hookToCopy.baseQueue,
+      queue: hookToCopy.queue,
+      next: null,
+    };
+    if (workInProgressHook === null) {
+      fiber.memoizedState = workInProgressHook = newHook;
+    } else {
+      workInProgressHook = workInProgressHook.next = newHook;
+    }
+    currentHook = hookToCopy;
+    if (hookToCopy === call.storeHook) {
+      nextStoreHook = newHook;
+    }
+    if (hookToCopy === call.lastHook) {
+      break;
+    }
+    hookToCopy = hookToCopy.next as any;
+  }
+  if (nextStoreHook === null || nextStoreEffect === null) {
+    throw new Error(
+      'A skipped store hook call did not contain its store. This is a bug in ' +
+        'React. Please file an issue.',
+    );
+  }
+  if (__DEV__) {
+    hookTypesUpdateIndexDev += call.hookCallCountDev;
+    hookCallCountDev += call.hookCallCountDev;
+  }
+  // What updateSyncExternalStore does when the snapshot changed.
+  if (!is(nextStoreHook.memoizedState, nextSnapshot)) {
+    nextStoreHook.memoizedState = nextSnapshot;
+    markWorkInProgressReceivedUpdate();
+    nextStoreEffect.tag = HookHasEffect | HookPassive;
+    nextStoreEffect.create = updateStoreInstance.bind(
+      null,
+      fiber,
+      inst,
+      nextSnapshot,
+      getSnapshot,
+    );
+    fiber.flags |= PassiveEffect;
+    if (!includesBlockingLane(renderLanes)) {
+      pushStoreConsistencyCheck(fiber, getSnapshot, nextSnapshot);
+    }
+  }
+  recordSelectedStore(
+    inst,
+    nextSnapshot,
+    call.subscribe,
+    getSnapshot,
+    nextStoreHook,
+    nextStoreEffect,
+    false,
+  );
+  selectedSkippedCall = call;
+  return nextSnapshot;
+}
+
 export const ContextOnlyDispatcher: Dispatcher = {
   readContext,
 
@@ -4250,6 +4710,7 @@ export const ContextOnlyDispatcher: Dispatcher = {
   unstable_useContextWithSelector: throwInvalidHookError,
   unstable_startSelectedHook: throwInvalidHookError,
   unstable_selectHookResult: throwInvalidHookError,
+  unstable_skipStoreHook: throwInvalidHookError,
   useEffect: throwInvalidHookError,
   useImperativeHandle: throwInvalidHookError,
   useLayoutEffect: throwInvalidHookError,
@@ -4281,6 +4742,7 @@ const HooksDispatcherOnMount: Dispatcher = {
   unstable_useContextWithSelector: readContextWithSelector,
   unstable_startSelectedHook: startSelectedHook,
   unstable_selectHookResult: selectHookResult,
+  unstable_skipStoreHook: skipStoreHook,
   useEffect: mountEffect,
   useImperativeHandle: mountImperativeHandle,
   useLayoutEffect: mountLayoutEffect,
@@ -4312,6 +4774,7 @@ const HooksDispatcherOnUpdate: Dispatcher = {
   unstable_useContextWithSelector: readContextWithSelector,
   unstable_startSelectedHook: startSelectedHook,
   unstable_selectHookResult: selectHookResult,
+  unstable_skipStoreHook: skipStoreHook,
   useEffect: updateEffect,
   useImperativeHandle: updateImperativeHandle,
   useInsertionEffect: updateInsertionEffect,
@@ -4343,6 +4806,7 @@ const HooksDispatcherOnRerender: Dispatcher = {
   unstable_useContextWithSelector: readContextWithSelector,
   unstable_startSelectedHook: startSelectedHook,
   unstable_selectHookResult: selectHookResult,
+  unstable_skipStoreHook: skipStoreHook,
   useEffect: updateEffect,
   useImperativeHandle: updateImperativeHandle,
   useInsertionEffect: updateInsertionEffect,
@@ -4422,10 +4886,25 @@ if (__DEV__) {
     },
     unstable_selectHookResult<T>(
       value: T,
-      changed: (previous: T, next: T, argument: mixed) => boolean,
+      changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
     ): T {
       return selectHookResult(value, changed, argument);
+    },
+    unstable_skipStoreHook(
+      hook: Function,
+      argumentCount: number,
+      argument0: mixed,
+      argument1: mixed,
+      argument2: mixed,
+    ): mixed {
+      return skipStoreHook(
+        hook,
+        argumentCount,
+        argument0,
+        argument1,
+        argument2,
+      );
     },
     useEffect(
       create: () => (() => void) | void,
@@ -4610,10 +5089,25 @@ if (__DEV__) {
     },
     unstable_selectHookResult<T>(
       value: T,
-      changed: (previous: T, next: T, argument: mixed) => boolean,
+      changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
     ): T {
       return selectHookResult(value, changed, argument);
+    },
+    unstable_skipStoreHook(
+      hook: Function,
+      argumentCount: number,
+      argument0: mixed,
+      argument1: mixed,
+      argument2: mixed,
+    ): mixed {
+      return skipStoreHook(
+        hook,
+        argumentCount,
+        argument0,
+        argument1,
+        argument2,
+      );
     },
     useEffect(
       create: () => (() => void) | void,
@@ -4793,10 +5287,25 @@ if (__DEV__) {
     },
     unstable_selectHookResult<T>(
       value: T,
-      changed: (previous: T, next: T, argument: mixed) => boolean,
+      changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
     ): T {
       return selectHookResult(value, changed, argument);
+    },
+    unstable_skipStoreHook(
+      hook: Function,
+      argumentCount: number,
+      argument0: mixed,
+      argument1: mixed,
+      argument2: mixed,
+    ): mixed {
+      return skipStoreHook(
+        hook,
+        argumentCount,
+        argument0,
+        argument1,
+        argument2,
+      );
     },
     useEffect(
       create: () => (() => void) | void,
@@ -4976,10 +5485,25 @@ if (__DEV__) {
     },
     unstable_selectHookResult<T>(
       value: T,
-      changed: (previous: T, next: T, argument: mixed) => boolean,
+      changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
     ): T {
       return selectHookResult(value, changed, argument);
+    },
+    unstable_skipStoreHook(
+      hook: Function,
+      argumentCount: number,
+      argument0: mixed,
+      argument1: mixed,
+      argument2: mixed,
+    ): mixed {
+      return skipStoreHook(
+        hook,
+        argumentCount,
+        argument0,
+        argument1,
+        argument2,
+      );
     },
     useEffect(
       create: () => (() => void) | void,
@@ -5166,10 +5690,25 @@ if (__DEV__) {
     },
     unstable_selectHookResult<T>(
       value: T,
-      changed: (previous: T, next: T, argument: mixed) => boolean,
+      changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
     ): T {
       return selectHookResult(value, changed, argument);
+    },
+    unstable_skipStoreHook(
+      hook: Function,
+      argumentCount: number,
+      argument0: mixed,
+      argument1: mixed,
+      argument2: mixed,
+    ): mixed {
+      return skipStoreHook(
+        hook,
+        argumentCount,
+        argument0,
+        argument1,
+        argument2,
+      );
     },
     useEffect(
       create: () => (() => void) | void,
@@ -5375,10 +5914,25 @@ if (__DEV__) {
     },
     unstable_selectHookResult<T>(
       value: T,
-      changed: (previous: T, next: T, argument: mixed) => boolean,
+      changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
     ): T {
       return selectHookResult(value, changed, argument);
+    },
+    unstable_skipStoreHook(
+      hook: Function,
+      argumentCount: number,
+      argument0: mixed,
+      argument1: mixed,
+      argument2: mixed,
+    ): mixed {
+      return skipStoreHook(
+        hook,
+        argumentCount,
+        argument0,
+        argument1,
+        argument2,
+      );
     },
     useEffect(
       create: () => (() => void) | void,
@@ -5584,10 +6138,25 @@ if (__DEV__) {
     },
     unstable_selectHookResult<T>(
       value: T,
-      changed: (previous: T, next: T, argument: mixed) => boolean,
+      changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
     ): T {
       return selectHookResult(value, changed, argument);
+    },
+    unstable_skipStoreHook(
+      hook: Function,
+      argumentCount: number,
+      argument0: mixed,
+      argument1: mixed,
+      argument2: mixed,
+    ): mixed {
+      return skipStoreHook(
+        hook,
+        argumentCount,
+        argument0,
+        argument1,
+        argument2,
+      );
     },
     useEffect(
       create: () => (() => void) | void,

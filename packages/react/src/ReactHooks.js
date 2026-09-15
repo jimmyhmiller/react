@@ -89,13 +89,29 @@ export function startSelectedHook(kind: 1 | 2): void {
 
 export function selectHookResult<T>(
   value: T,
-  changed: (previous: T, next: T, argument: mixed) => boolean,
+  changed: null | ((previous: T, next: T, argument: mixed) => boolean),
   argument: mixed,
 ): T {
   return resolveDispatcher().unstable_selectHookResult(
     value,
     changed,
     argument,
+  );
+}
+
+export function skipStoreHook(
+  hook: Function,
+  argumentCount: number,
+  argument0: mixed,
+  argument1: mixed,
+  argument2: mixed,
+): mixed {
+  return resolveDispatcher().unstable_skipStoreHook(
+    hook,
+    argumentCount,
+    argument0,
+    argument1,
+    argument2,
   );
 }
 

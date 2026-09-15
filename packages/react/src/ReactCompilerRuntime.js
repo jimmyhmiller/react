@@ -12,15 +12,18 @@ import {
   useContextWithSelector,
   startSelectedHook,
   selectHookResult,
+  skipStoreHook as skipStoreHookInReact,
 } from './ReactHooks';
 import {
   REACT_LIST_CHANGES,
   REACT_MEMO_CACHE_SENTINEL,
+  REACT_STORE_HOOK_NOT_SKIPPED,
 } from 'shared/ReactSymbols';
 import type {ReactContext} from 'shared/ReactTypes';
 import {
   enableContextSelectors,
   enableNoCloningMemoCache,
+  enableUpdateSlicing,
 } from 'shared/ReactFeatureFlags';
 import isArray from 'shared/isArray';
 
@@ -163,11 +166,81 @@ export function unstable_selectHookPaths<T>(
   started: 0 | 1 | 2,
   value: T,
   hook: Function,
-  paths: SelectedPaths,
+  paths: SelectedPaths | null,
 ): T {
   return started !== 0
-    ? selectHookResult(value, pathsChanged as any, paths)
+    ? selectHookResult(
+        value,
+        paths === null ? null : (pathsChanged as any),
+        paths,
+      )
     : value;
+}
+
+// Update slicing (enableUpdateSlicing): after
+// `const started = unstable_startSelectedHook(useX)`, the compiler emits
+// `const skipped = unstable_skipStoreHookN(started, useX, ...args)` and
+// `skipped !== useX ? skipped : useX(...args)` (with N arguments). For a
+// registered store hook whose call in the previous render had the same
+// arguments, React can skip the call and return the store's new snapshot
+// (see skipStoreHook in ReactFiberHooks); otherwise this returns the hook,
+// and the hook is called. React never skips a call whose snapshot is the hook.
+function skipStoreHook(
+  started: 0 | 1 | 2,
+  hook: Function,
+  argumentCount: number,
+  argument0: mixed,
+  argument1: mixed,
+  argument2: mixed,
+): mixed {
+  if (!enableUpdateSlicing) {
+    throw new Error('Update slicing is not enabled in this build of React.');
+  }
+  if (started !== 2) {
+    return hook;
+  }
+  const value = skipStoreHookInReact(
+    hook,
+    argumentCount,
+    argument0,
+    argument1,
+    argument2,
+  );
+  return value === REACT_STORE_HOOK_NOT_SKIPPED ? hook : value;
+}
+
+export function unstable_skipStoreHook0(
+  started: 0 | 1 | 2,
+  hook: Function,
+): mixed {
+  return skipStoreHook(started, hook, 0, undefined, undefined, undefined);
+}
+
+export function unstable_skipStoreHook1(
+  started: 0 | 1 | 2,
+  hook: Function,
+  argument0: mixed,
+): mixed {
+  return skipStoreHook(started, hook, 1, argument0, undefined, undefined);
+}
+
+export function unstable_skipStoreHook2(
+  started: 0 | 1 | 2,
+  hook: Function,
+  argument0: mixed,
+  argument1: mixed,
+): mixed {
+  return skipStoreHook(started, hook, 2, argument0, argument1, undefined);
+}
+
+export function unstable_skipStoreHook3(
+  started: 0 | 1 | 2,
+  hook: Function,
+  argument0: mixed,
+  argument1: mixed,
+  argument2: mixed,
+): mixed {
+  return skipStoreHook(started, hook, 3, argument0, argument1, argument2);
 }
 
 export function unstable_selectHookResult<T>(
