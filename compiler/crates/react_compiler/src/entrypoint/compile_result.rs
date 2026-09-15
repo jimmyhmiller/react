@@ -234,6 +234,10 @@ pub struct CodegenFunction {
     pub pruned_memo_blocks: u32,
     pub pruned_memo_values: u32,
     pub outlined: Vec<OutlinedFunction>,
+    /// Compiled block templates to emit at module scope.
+    pub block_templates: Vec<react_compiler_hir::block_template::BlockTemplate>,
+    /// See `Environment::returns_block`.
+    pub returns_block: react_compiler_hir::block_template::ReturnsBlock,
 }
 
 /// An outlined function extracted during compilation.

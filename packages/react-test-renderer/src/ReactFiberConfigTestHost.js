@@ -62,6 +62,7 @@ export * from 'react-reconciler/src/ReactFiberConfigWithNoTestSelectors';
 export * from 'react-reconciler/src/ReactFiberConfigWithNoMicrotasks';
 export * from 'react-reconciler/src/ReactFiberConfigWithNoResources';
 export * from 'react-reconciler/src/ReactFiberConfigWithNoSingletons';
+export * from 'react-reconciler/src/ReactFiberConfigWithNoBlocks';
 
 const NO_CONTEXT = {};
 const nodeToInstanceMap = new WeakMap<any, Instance>();

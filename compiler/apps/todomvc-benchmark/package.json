@@ -1,0 +1,22 @@
+{
+  "name": "todomvc-benchmark",
+  "private": true,
+  "description": "TodoMVC stress benchmark for React Compiler output variants (Rust compiler).",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "bench": "node scripts/bench.mjs"
+  },
+  "dependencies": {
+    "preact": "10.29.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "solid-js": "1.9.15",
+    "svelte": "5.57.0",
+    "todomvc-app-css": "2.4.3",
+    "vue": "3.5.42"
+  },
+  "devDependencies": {
+    "babel-preset-solid": "1.9.15",
+    "playwright": "1.63.0"
+  }
+}

@@ -200,6 +200,7 @@ export function report(
   results: TestResults,
   verbose: boolean = false,
   rust: boolean = false,
+  evalOnly: boolean = false,
 ): boolean {
   const failures: Array<[string, TestResult]> = [];
   for (const [basename, result] of results) {
@@ -214,7 +215,10 @@ export function report(
       rust && result.expected
         ? normalizeCodeBlankLines(result.expected)
         : result.expected;
-    if (actual === expected && result.unexpectedError == null) {
+    // In eval-only mode a fixture passes when it compiles as expected and its
+    // evaluated output matches the uncompiled source, regardless of snapshot.
+    const snapshotMatches = evalOnly || actual === expected;
+    if (snapshotMatches && result.unexpectedError == null) {
       if (verbose) {
         console.log(
           chalk.green.inverse.bold(' PASS ') + ' ' + chalk.dim(basename),

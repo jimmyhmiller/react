@@ -74,6 +74,18 @@ pub struct ProgramContext {
     // Internal state
     already_compiled: FxHashSet<u32>,
     known_referenced_names: FxHashSet<String>,
+    /// Compiled block templates known in this module: structure key -> name.
+    block_template_names: FxHashMap<String, String>,
+    imports: FxHashMap<String, FxHashMap<String, NonLocalImportSpecifier>>,
+}
+
+/// Snapshot of [`ProgramContext`] state taken before a speculative compilation.
+pub struct ProgramContextCheckpoint {
+    events_len: usize,
+    ordered_log_len: usize,
+    renames_len: usize,
+    known_referenced_names: FxHashSet<String>,
+    block_template_names: FxHashMap<String, String>,
     imports: FxHashMap<String, FxHashMap<String, NonLocalImportSpecifier>>,
 }
 
@@ -106,6 +118,7 @@ impl ProgramContext {
             debug_enabled,
             already_compiled: FxHashSet::default(),
             known_referenced_names: FxHashSet::default(),
+            block_template_names: FxHashMap::default(),
             imports: FxHashMap::default(),
         }
     }
@@ -238,6 +251,42 @@ impl ProgramContext {
     /// so subsequent function compilations avoid collisions.
     pub fn merge_uid_known_names(&mut self, names: &FxHashSet<String>) {
         self.known_referenced_names.extend(names.iter().cloned());
+    }
+
+    /// The compiled block templates known in this module, by structure key.
+    pub fn block_template_names(&self) -> &FxHashMap<String, String> {
+        &self.block_template_names
+    }
+
+    /// Record the block templates known after a function compilation, so that
+    /// later compilations reuse the names of identical templates.
+    pub fn merge_block_template_names(&mut self, names: &FxHashMap<String, String>) {
+        self.block_template_names
+            .extend(names.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+
+    /// Capture the state that compiling a function can change, so that a
+    /// speculative compilation can be discarded with [`Self::rollback`].
+    pub fn checkpoint(&self) -> ProgramContextCheckpoint {
+        ProgramContextCheckpoint {
+            events_len: self.events.len(),
+            ordered_log_len: self.ordered_log.len(),
+            renames_len: self.renames.len(),
+            known_referenced_names: self.known_referenced_names.clone(),
+            block_template_names: self.block_template_names.clone(),
+            imports: self.imports.clone(),
+        }
+    }
+
+    /// Discard events, log entries, renames, generated names and imports
+    /// recorded since `checkpoint` was taken.
+    pub fn rollback(&mut self, checkpoint: ProgramContextCheckpoint) {
+        self.events.truncate(checkpoint.events_len);
+        self.ordered_log.truncate(checkpoint.ordered_log_len);
+        self.renames.truncate(checkpoint.renames_len);
+        self.known_referenced_names = checkpoint.known_referenced_names;
+        self.block_template_names = checkpoint.block_template_names;
+        self.imports = checkpoint.imports;
     }
 
     /// Log a compilation event.

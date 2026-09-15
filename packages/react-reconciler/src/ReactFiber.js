@@ -34,6 +34,8 @@ import {
   supportsSingletons,
   isHostHoistableType,
   isHostSingletonType,
+  supportsBlocks,
+  isBlockTemplate,
 } from './ReactFiberConfig';
 import {
   enableProfilerTimer,
@@ -45,6 +47,7 @@ import {
   enableViewTransition,
   enableSuspenseyImages,
   enableOptimisticKey,
+  enableCompiledBlocks,
 } from 'shared/ReactFeatureFlags';
 import {NoFlags, Placement, StaticMask} from './ReactFiberFlags';
 import {ConcurrentRoot} from './ReactRootTags';
@@ -76,6 +79,8 @@ import {
   Throw,
   ViewTransitionComponent,
   ActivityComponent,
+  HostBlock,
+  HostBlockSlot,
 } from './ReactWorkTags';
 import {getComponentNameFromOwner} from 'react-reconciler/src/getComponentNameFromFiber';
 import {isDevToolsPresent} from './ReactFiberDevToolsHook';
@@ -638,6 +643,15 @@ export function createFiberFromTypeAndProps(
         }
       // Fall through
       default: {
+        if (
+          enableCompiledBlocks &&
+          // $FlowFixMe[constant-condition]
+          supportsBlocks &&
+          isBlockTemplate(resolvedType)
+        ) {
+          fiberTag = HostBlock;
+          break getTag;
+        }
         // $FlowFixMe[invalid-compare]
         if (typeof resolvedType === 'object' && resolvedType !== null) {
           switch (resolvedType.$$typeof) {
@@ -952,6 +966,22 @@ export function createFiberFromPortal(
     implementation: portal.implementation,
   };
   return fiber;
+}
+
+// `props.children` are the children the slot fiber reconciles. For a slot
+// that holds a list of blocks (see updateHostBlock), `props.list` is the list
+// and `props.children` has the items that need fibers at their indices. When
+// `props.adopt` is set, new block fibers for items of the inline list the slot
+// rendered adopt their instances.
+export function createFiberFromBlockSlot(
+  props: {
+    children: mixed,
+    list: null | $ReadOnlyArray<mixed>,
+    adopt: boolean,
+  },
+  mode: TypeOfMode,
+): Fiber {
+  return createFiber(HostBlockSlot, props, null, mode);
 }
 
 export function createFiberFromThrow(

@@ -1,7 +1,11 @@
 pub mod constant_propagation;
 pub mod dead_code_elimination;
 pub mod drop_manual_memoization;
+pub mod inline_components;
 pub mod inline_iifes;
+mod jsx_block_positions;
+pub mod jsx_blocks;
+pub mod memoize_list_items;
 pub mod merge_consecutive_blocks;
 pub mod name_anonymous_functions;
 pub mod optimize_for_ssr;
@@ -14,7 +18,13 @@ pub mod prune_unused_labels_hir;
 pub use constant_propagation::constant_propagation;
 pub use dead_code_elimination::dead_code_elimination;
 pub use drop_manual_memoization::drop_manual_memoization;
+pub use inline_components::{
+    CalleeSummary, InlineCandidate, InlineComponentCandidates, NotInlinableReason, inline_components,
+    summarize_callee,
+};
 pub use inline_iifes::inline_immediately_invoked_function_expressions;
+pub use jsx_blocks::compile_jsx_blocks;
+pub use memoize_list_items::memoize_list_items;
 pub use name_anonymous_functions::name_anonymous_functions;
 pub use optimize_for_ssr::optimize_for_ssr;
 pub use optimize_props_method_calls::optimize_props_method_calls;

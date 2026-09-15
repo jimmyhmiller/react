@@ -68,6 +68,7 @@ import {
   HostPortal,
   OffscreenComponent,
   ViewTransitionComponent,
+  HostBlock,
 } from './ReactWorkTags';
 import {
   restoreEnterOrExitViewTransitions,
@@ -419,6 +420,10 @@ function recursivelyInsertNewFiber(
   visitPhase: VisitPhase,
 ): void {
   switch (finishedWork.tag) {
+    case HostBlock:
+      throw new Error(
+        'Compiled blocks do not support startGestureTransition() yet.',
+      );
     case FunctionComponent:
     case ForwardRef:
     case MemoComponent:
@@ -596,6 +601,10 @@ function recursivelyInsertClonesFromExistingTree(
   let child = parentFiber.child;
   while (child !== null) {
     switch (child.tag) {
+      case HostBlock:
+        throw new Error(
+          'Compiled blocks do not support startGestureTransition() yet.',
+        );
       case HostComponent: {
         const instance: Instance = child.stateNode;
         let nextPhase: VisitPhase;
@@ -816,6 +825,10 @@ function insertDestinationClonesOfFiber(
   // because the fiber tag is more specific. An exception is any flag related
   // to reconciliation, because those can be set on all fiber types.
   switch (finishedWork.tag) {
+    case HostBlock:
+      throw new Error(
+        'Compiled blocks do not support startGestureTransition() yet.',
+      );
     case HostHoistable: {
       // $FlowFixMe[constant-condition]
       if (supportsResources) {
@@ -1089,6 +1102,10 @@ function recursivelyRestoreNew(
     }
   }
   switch (finishedWork.tag) {
+    case HostBlock:
+      throw new Error(
+        'Compiled blocks do not support startGestureTransition() yet.',
+      );
     case FunctionComponent:
     case ForwardRef:
     case MemoComponent:
@@ -1147,6 +1164,10 @@ function applyViewTransitionsOnFiber(finishedWork: Fiber, current: Fiber) {
   // because the fiber tag is more specific. An exception is any flag related
   // to reconciliation, because those can be set on all fiber types.
   switch (finishedWork.tag) {
+    case HostBlock:
+      throw new Error(
+        'Compiled blocks do not support startGestureTransition() yet.',
+      );
     case HostPortal: {
       // TODO: Consider what should happen to Portals. For now we exclude them.
       break;
@@ -1310,6 +1331,10 @@ function restoreViewTransitionsOnFiber(finishedWork: Fiber) {
   // because the fiber tag is more specific. An exception is any flag related
   // to reconciliation, because those can be set on all fiber types.
   switch (finishedWork.tag) {
+    case HostBlock:
+      throw new Error(
+        'Compiled blocks do not support startGestureTransition() yet.',
+      );
     case HostPortal: {
       // TODO: Consider what should happen to Portals. For now we exclude them.
       break;

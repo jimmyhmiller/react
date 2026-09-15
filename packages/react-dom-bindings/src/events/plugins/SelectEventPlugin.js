@@ -21,7 +21,7 @@ import shallowEqual from 'shared/shallowEqual';
 
 import {registerTwoPhaseEvent} from '../EventRegistry';
 import getActiveElement from '../../client/getActiveElement';
-import {getNodeFromInstance} from '../../client/ReactDOMComponentTree';
+import {getEventNodeFromInstance} from '../../client/ReactDOMComponentTree';
 import {hasSelectionCapabilities} from '../../client/ReactInputSelection';
 import {DOCUMENT_NODE} from '../../client/HTMLNodeType';
 import {accumulateTwoPhaseListeners} from '../DOMPluginEventSystem';
@@ -118,6 +118,7 @@ function constructSelectEvent(
     const listeners = accumulateTwoPhaseListeners(
       activeElementInst,
       'onSelect',
+      activeElement,
     );
     if (listeners.length > 0) {
       const event: ReactSyntheticEvent = new SyntheticEvent(
@@ -156,7 +157,9 @@ function extractEvents(
   eventSystemFlags: EventSystemFlags,
   targetContainer: EventTarget,
 ) {
-  const targetNode = targetInst ? getNodeFromInstance(targetInst) : window;
+  const targetNode = targetInst
+    ? getEventNodeFromInstance(targetInst, nativeEventTarget)
+    : window;
 
   switch (domEventName) {
     // Track the input node that has focus.

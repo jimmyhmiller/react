@@ -40,8 +40,11 @@ use react_compiler_diagnostics::CompilerErrorOrDiagnostic;
 use react_compiler_diagnostics::ErrorCategory;
 use react_compiler_diagnostics::SourceLocation;
 use react_compiler_hir::ReactFunctionType;
+use react_compiler_hir::environment::Environment;
 use react_compiler_hir::environment_config::EnvironmentConfig;
 use react_compiler_lowering::FunctionNode;
+use react_compiler_optimization::InlineCandidate;
+use react_compiler_optimization::InlineComponentCandidates;
 
 use super::compile_result::BindingRenameInfo;
 use super::compile_result::CodegenFunction;
@@ -56,7 +59,9 @@ use super::compile_result::LoggerSourceLocation;
 use super::compile_result::LoggerSuggestionInfo;
 use super::compile_result::LoggerSuggestionOp;
 use super::compile_result::OrderedLogItem;
+use react_compiler_hir::block_template::ReturnsBlock;
 use super::imports::ProgramContext;
+use super::inline_candidates;
 use super::imports::add_imports_to_program;
 use super::imports::get_react_compiler_runtime_module;
 use super::imports::validate_restricted_imports;
@@ -1497,6 +1502,7 @@ fn try_compile_function(
     scope_info: &ScopeInfo,
     output_mode: CompilerOutputMode,
     env_config: &EnvironmentConfig,
+    inline_candidates: &InlineComponentCandidates<'_>,
     context: &mut ProgramContext,
 ) -> Result<CodegenFunction, CompilerError> {
     // Check for suppressions that affect this function
@@ -1512,16 +1518,226 @@ fn try_compile_function(
         }
     }
 
-    // Run the compilation pipeline
-    pipeline::compile_fn(
-        &source.fn_node,
-        source.fn_name.as_deref(),
-        scope_info,
-        source.fn_type,
-        output_mode,
-        env_config,
-        context,
-    )
+    // Component inlining and list item memoization are experiments that must
+    // never turn a successful compilation into a bailout. Compile with every
+    // enabled experiment first; if an attempt that used an experiment fails,
+    // discard everything it recorded and compile again without that
+    // experiment: first without list item memoization, then also without
+    // inlining.
+    let mut use_inlining = !inline_candidates.is_empty();
+    let mut use_list_memoization = env_config.enable_list_item_memoization;
+    loop {
+        let attempt_config;
+        let config = if use_list_memoization == env_config.enable_list_item_memoization {
+            env_config
+        } else {
+            attempt_config = EnvironmentConfig {
+                enable_list_item_memoization: use_list_memoization,
+                ..env_config.clone()
+            };
+            &attempt_config
+        };
+        let checkpoint = context.checkpoint();
+        let mut inlined_sites = 0;
+        let mut memoized_lists = 0;
+        let result = pipeline::compile_fn(
+            &source.fn_node,
+            source.fn_name.as_deref(),
+            scope_info,
+            source.fn_type,
+            output_mode,
+            config,
+            if use_inlining {
+                Some(inline_candidates)
+            } else {
+                None
+            },
+            &mut inlined_sites,
+            &mut memoized_lists,
+            context,
+        );
+        let error = match result {
+            Err(error) if memoized_lists > 0 || inlined_sites > 0 => error,
+            result => return result,
+        };
+        context.rollback(checkpoint);
+        let disabled = if memoized_lists > 0 {
+            use_list_memoization = false;
+            "list item memoization"
+        } else {
+            use_inlining = false;
+            "inlining"
+        };
+        if context.debug_enabled {
+            context.log_debug(DebugLogEntry::new(
+                "ExperimentalFallback",
+                format!(
+                    "compilation failed after inlining {} site(s) and memoizing {} list(s); compiling without {}\n{}",
+                    inlined_sites,
+                    memoized_lists,
+                    disabled,
+                    error.to_string_for_event()
+                ),
+            ));
+        }
+    }
+}
+
+/// Builds the set of components that may be inlined into other functions of
+/// this module (see `compiler/docs/experiments/0001-component-inlining.md`).
+///
+/// Starts from the components that satisfy the AST-level rules, applies the
+/// HIR-level callee rules to a scratch lowering, and requires that each
+/// component compiles successfully on its own with inlining disabled (rule
+/// C5). The standalone compilation is speculative: everything it records is
+/// discarded.
+fn collect_inline_candidates<'a>(
+    program: &'a Program,
+    scope: &ScopeInfo,
+    queue: &[CompileSource<'a>],
+    output_mode: CompilerOutputMode,
+    env_config: &EnvironmentConfig,
+    context: &mut ProgramContext,
+) -> InlineComponentCandidates<'a> {
+    let mut candidates = InlineComponentCandidates::new();
+    let mut report: Vec<String> = Vec::new();
+    let no_candidates = InlineComponentCandidates::new();
+    // Accepted candidates in module order, with their compile sources.
+    let mut accepted: Vec<(String, &CompileSource<'a>)> = Vec::new();
+    for component in inline_candidates::find_module_components(program, scope) {
+        let mut scratch = Environment::with_config(env_config.clone());
+        scratch.fn_type = ReactFunctionType::Component;
+        let summary = match react_compiler_lowering::lower(
+            &component.node,
+            Some(&component.name),
+            scope,
+            &mut scratch,
+        ) {
+            Ok(hir) if !scratch.has_errors() => {
+                match react_compiler_optimization::summarize_callee(&hir, &scratch) {
+                    Ok(summary) => summary,
+                    Err(reason) => {
+                        report.push(format!("{}: rejected ({:?})", component.name, reason));
+                        continue;
+                    }
+                }
+            }
+            _ => {
+                report.push(format!("{}: rejected (lowering failed)", component.name));
+                continue;
+            }
+        };
+
+        let Some(source) = queue
+            .iter()
+            .find(|s| s.fn_node_id.is_some() && s.fn_node_id == component.node_id)
+        else {
+            report.push(format!("{}: rejected (not compiled)", component.name));
+            continue;
+        };
+        let checkpoint = context.checkpoint();
+        let standalone = try_compile_function(
+            source,
+            scope,
+            output_mode,
+            env_config,
+            &no_candidates,
+            context,
+        );
+        context.rollback(checkpoint);
+        let returns_block = match standalone {
+            Ok(compiled) => compiled.returns_block,
+            Err(_) => {
+                report.push(format!(
+                    "{}: rejected (does not compile on its own)",
+                    component.name
+                ));
+                continue;
+            }
+        };
+
+        report.push(format!("{}: accepted {:?}", component.name, summary));
+        accepted.push((component.name.clone(), source));
+        candidates.insert(
+            component.name,
+            InlineCandidate {
+                node: component.node,
+                summary,
+                returns_block,
+            },
+        );
+    }
+    if env_config.enable_jsx_blocks {
+        compute_leaf_blocks(&mut candidates, &accepted, scope, output_mode, env_config, context);
+    }
+    for (name, _) in &accepted {
+        let returns_block = candidates
+            .get(name)
+            .map(|candidate| candidate.returns_block)
+            .unwrap_or_default();
+        report.push(format!("{}: returns_block: {:?}", name, returns_block));
+    }
+    if context.debug_enabled {
+        report.sort();
+        context.log_debug(DebugLogEntry::new(
+            "InlineComponentCandidates",
+            report.join("\n"),
+        ));
+    }
+    candidates
+}
+
+/// Decides what each candidate returns in terms of blocks when compiled the
+/// way it is inlined: with the other candidates inlined into it. Inlining a
+/// child can turn a slot holding the child's element into host elements of the
+/// same block, so a component's status can depend on its children's.
+///
+/// Starts from the standalone compilation without inlining and recompiles
+/// candidates with inlining until no status changes. A status only ever
+/// increases (inlining children and callees replaces elements in slots with
+/// block content), so the iteration is monotonic and ends after at most two
+/// rounds per candidate. Every compilation is speculative and rolled back.
+fn compute_leaf_blocks<'a>(
+    candidates: &mut InlineComponentCandidates<'a>,
+    accepted: &[(String, &CompileSource<'a>)],
+    scope: &ScopeInfo,
+    output_mode: CompilerOutputMode,
+    env_config: &EnvironmentConfig,
+    context: &mut ProgramContext,
+) {
+    for _round in 0..=(2 * accepted.len()) {
+        let mut changed: Vec<(&str, ReturnsBlock)> = Vec::new();
+        for (name, source) in accepted {
+            let current = candidates
+                .get(name)
+                .map(|c| c.returns_block)
+                .unwrap_or_default();
+            if current == ReturnsBlock::LeafBlock {
+                continue;
+            }
+            let checkpoint = context.checkpoint();
+            let compiled = try_compile_function(
+                source,
+                scope,
+                output_mode,
+                env_config,
+                candidates,
+                context,
+            );
+            context.rollback(checkpoint);
+            if let Ok(compiled) = compiled {
+                if compiled.returns_block > current {
+                    changed.push((name, compiled.returns_block));
+                }
+            }
+        }
+        if changed.is_empty() {
+            return;
+        }
+        for (name, returns_block) in changed {
+            candidates.set_returns_block(name, returns_block);
+        }
+    }
 }
 
 /// Process a single function: check directives, attempt compilation, handle results.
@@ -1534,6 +1750,7 @@ fn process_fn(
     scope_info: &ScopeInfo,
     output_mode: CompilerOutputMode,
     env_config: &EnvironmentConfig,
+    inline_candidates: &InlineComponentCandidates<'_>,
     context: &mut ProgramContext,
 ) -> Result<Option<CodegenFunction>, CompileResult> {
     // Parse directives from the function body
@@ -1554,7 +1771,14 @@ fn process_fn(
     };
 
     // Attempt compilation
-    let compile_result = try_compile_function(source, scope_info, output_mode, env_config, context);
+    let compile_result = try_compile_function(
+        source,
+        scope_info,
+        output_mode,
+        env_config,
+        inline_candidates,
+        context,
+    );
 
     match compile_result {
         Err(err) => {
@@ -2633,14 +2857,18 @@ fn apply_compiled_functions(
     let needs_memo_import = compiled_fns
         .iter()
         .any(|cf| cf.codegen_fn.memo_slots_used > 0);
+    let mut block_templates = Vec::new();
 
     // Replace each compiled function in the AST
     for (idx, mut compiled) in compiled_fns.into_iter().enumerate() {
         let fn_node_id = compiled.fn_node_id;
         let original_kind = compiled.original_kind;
 
+        block_templates.append(&mut compiled.codegen_fn.block_templates);
+
         // Collect outlined functions for this compiled function
-        for outlined in std::mem::take(&mut compiled.codegen_fn.outlined) {
+        for mut outlined in std::mem::take(&mut compiled.codegen_fn.outlined) {
+            block_templates.append(&mut outlined.func.block_templates);
             let outlined_decl = FunctionDeclaration {
                 base: BaseNode::typed("FunctionDeclaration"),
                 id: outlined.func.id,
@@ -2723,6 +2951,8 @@ fn apply_compiled_functions(
         };
         walk_program_mut(&mut visitor, program);
     }
+
+    super::block_templates::insert_block_templates(program, block_templates, context);
 
     // Instrumentation and hook guard imports are pre-registered in compile_program
     // before compilation, so they are already in the imports map. No post-hoc
@@ -3922,11 +4152,31 @@ pub fn compile_program(mut file: File, scope: ScopeInfo, options: PluginOptions)
     // while satisfying the borrow checker — compile_fn needs &mut context + &env_config)
     let env_config = options.environment.clone();
 
+    let inline_candidates = if env_config.enable_component_inlining {
+        collect_inline_candidates(
+            program,
+            &scope,
+            &queue,
+            output_mode,
+            &env_config,
+            &mut context,
+        )
+    } else {
+        InlineComponentCandidates::new()
+    };
+
     // Process each function and collect compiled results
     let mut compiled_fns: Vec<CompiledFunction<'_>> = Vec::new();
 
     for source in &queue {
-        match process_fn(source, &scope, output_mode, &env_config, &mut context) {
+        match process_fn(
+            source,
+            &scope,
+            output_mode,
+            &env_config,
+            &inline_candidates,
+            &mut context,
+        ) {
             Ok(Some(codegen_fn)) => {
                 compiled_fns.push(CompiledFunction {
                     kind: source.kind,

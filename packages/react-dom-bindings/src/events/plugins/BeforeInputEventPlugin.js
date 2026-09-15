@@ -227,7 +227,11 @@ function extractCompositionEvent(
     }
   }
 
-  const listeners = accumulateTwoPhaseListeners(targetInst, eventType);
+  const listeners = accumulateTwoPhaseListeners(
+    targetInst,
+    eventType,
+    nativeEventTarget,
+  );
   if (listeners.length > 0) {
     const event: ReactSyntheticEvent = new SyntheticCompositionEvent(
       eventType,
@@ -399,7 +403,11 @@ function extractBeforeInputEvent(
     return null;
   }
 
-  const listeners = accumulateTwoPhaseListeners(targetInst, 'onBeforeInput');
+  const listeners = accumulateTwoPhaseListeners(
+    targetInst,
+    'onBeforeInput',
+    nativeEventTarget,
+  );
   if (listeners.length > 0) {
     const event: ReactSyntheticEvent = new SyntheticInputEvent(
       'onBeforeInput',

@@ -15,6 +15,7 @@ mod assert_well_formed_break_targets;
 mod build_reactive_function;
 pub mod codegen_reactive_function;
 mod extract_scope_declarations_from_destructuring;
+mod memoize_list_item_body;
 mod merge_reactive_scopes_that_invalidate_together;
 pub mod print_reactive_function;
 mod promote_used_temporaries;

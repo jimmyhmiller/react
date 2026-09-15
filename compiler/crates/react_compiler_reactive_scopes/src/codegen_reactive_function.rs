@@ -159,6 +159,10 @@ pub struct CodegenFunction {
     pub pruned_memo_blocks: u32,
     pub pruned_memo_values: u32,
     pub outlined: Vec<OutlinedFunction>,
+    /// Compiled block templates to emit at module scope.
+    pub block_templates: Vec<react_compiler_hir::block_template::BlockTemplate>,
+    /// See `Environment::returns_block`.
+    pub returns_block: react_compiler_hir::block_template::ReturnsBlock,
 }
 
 impl std::fmt::Debug for CodegenFunction {
@@ -547,6 +551,8 @@ pub fn codegen_function(
         });
     }
     compiled.outlined = outlined;
+    compiled.block_templates = cx.env.take_block_templates();
+    compiled.returns_block = cx.env.returns_block();
 
     Ok(compiled)
 }
@@ -810,6 +816,8 @@ fn codegen_reactive_function(
         pruned_memo_blocks,
         pruned_memo_values,
         outlined: Vec::new(),
+        block_templates: Vec::new(),
+        returns_block: react_compiler_hir::block_template::ReturnsBlock::No,
     })
 }
 
@@ -2749,6 +2757,8 @@ fn codegen_base_instruction_value(
 // Function expression codegen
 // =============================================================================
 
+use crate::memoize_list_item_body::memoize_list_item_body;
+
 fn codegen_function_expression(
     cx: &mut Context,
     name: &Option<String>,
@@ -2763,6 +2773,27 @@ fn codegen_function_expression(
     prune_unused_lvalues(&mut reactive_fn_mut, cx.env);
     prune_hoisted_contexts(&mut reactive_fn_mut, cx.env)?;
 
+    // A list item callback selected by MemoizeListItems memoizes its returned
+    // element in a cache provided by `listItemCache.next(N)`.
+    let mut unique_identifiers = cx.unique_identifiers.clone();
+    let list_item_cache = match cx.env.list_item_callback_cache(lowered_func.func) {
+        Some(cache) => {
+            let mut name_for = |base: &str| {
+                let mut index = 0u32;
+                loop {
+                    let candidate = format!("{base}{index}");
+                    if unique_identifiers.insert(candidate.clone()) {
+                        return candidate;
+                    }
+                    index += 1;
+                }
+            };
+            memoize_list_item_body(&mut reactive_fn_mut, cx.env, &mut name_for)?
+                .map(|scope| (cache, scope))
+        }
+        None => None,
+    };
+
     let mut inner_cx = Context::new(
         cx.env,
         reactive_fn_mut
@@ -2770,7 +2801,7 @@ fn codegen_function_expression(
             .as_deref()
             .unwrap_or("[[ anonymous ]]")
             .to_string(),
-        cx.unique_identifiers.clone(),
+        unique_identifiers,
         cx.fbt_operands.clone(),
     );
     // The inner function reads the enclosing temporaries but must not leak its
@@ -2782,7 +2813,73 @@ fn codegen_function_expression(
     let fn_result = codegen_reactive_function(&mut inner_cx, &reactive_fn_mut);
 
     cx.temp.reclaim(std::mem::take(&mut inner_cx.temp));
-    let fn_result = fn_result?;
+    let mut fn_result = fn_result?;
+
+    if let Some((cache, scope)) = list_item_cache {
+        let cache_count = inner_cx.next_cache_index;
+        if cache_count != 0 {
+            // const $ = listItemCache.next(N, key), right before the scope (after
+            // the key and the other dependencies are computed), which starts by
+            // declaring its output.
+            let cache_name = inner_cx.synthesize_name("$");
+            let provider = convert_identifier(cache, inner_cx.env)?;
+            let output_name = convert_identifier(scope.output, inner_cx.env)?.name;
+            let mut arguments = vec![Expression::NumericLiteral(NumericLiteral {
+                base: BaseNode::typed("NumericLiteral"),
+                value: cache_count as f64,
+                extra: None,
+            })];
+            if let Some(key) = scope.key {
+                arguments.push(Expression::Identifier(convert_identifier(key, inner_cx.env)?));
+            }
+            let position = fn_result
+                .body
+                .body
+                .iter()
+                .position(|statement| match statement {
+                    Statement::VariableDeclaration(declaration) => {
+                        declaration.declarations.iter().any(|declarator| {
+                            matches!(&declarator.id, PatternLike::Identifier(id) if id.name == output_name)
+                        })
+                    }
+                    _ => false,
+                })
+                .ok_or_else(|| {
+                    invariant_err(
+                        "MemoizeListItems: expected the list item scope to declare its output",
+                        None,
+                    )
+                })?;
+            fn_result.body.body.insert(
+                position,
+                Statement::VariableDeclaration(VariableDeclaration {
+                    base: BaseNode::typed("VariableDeclaration"),
+                    declarations: vec![make_var_declarator(
+                        PatternLike::Identifier(make_identifier(&cache_name)),
+                        Some(Expression::CallExpression(ast_expr::CallExpression {
+                            base: BaseNode::typed("CallExpression"),
+                            callee: Box::new(Expression::MemberExpression(
+                                ast_expr::MemberExpression {
+                                    base: BaseNode::typed("MemberExpression"),
+                                    object: Box::new(Expression::Identifier(provider)),
+                                    property: Box::new(Expression::Identifier(make_identifier(
+                                        "next",
+                                    ))),
+                                    computed: false,
+                                },
+                            )),
+                            arguments,
+                            type_parameters: None,
+                            type_arguments: None,
+                            optional: None,
+                        })),
+                    )],
+                    kind: VariableDeclarationKind::Const,
+                    declare: None,
+                }),
+            );
+        }
+    }
 
     let value = match expr_type {
         FunctionExpressionType::ArrowFunctionExpression => {

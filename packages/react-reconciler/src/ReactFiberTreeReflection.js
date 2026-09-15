@@ -29,7 +29,10 @@ import {
   SuspenseComponent,
   OffscreenComponent,
   Fragment,
+  HostBlock,
+  HostBlockSlot,
 } from './ReactWorkTags';
+import {getBlockSlotParent} from './ReactFiberConfig';
 import {NoFlags, Placement, Hydrating} from './ReactFiberFlags';
 import {enableFragmentRefsTextNodes} from 'shared/ReactFeatureFlags';
 
@@ -273,7 +276,8 @@ function findCurrentHostFiberImpl(node: Fiber): Fiber | null {
     tag === HostComponent ||
     tag === HostHoistable ||
     tag === HostSingleton ||
-    tag === HostText
+    tag === HostText ||
+    tag === HostBlock
   ) {
     return node;
   }
@@ -304,7 +308,8 @@ function findCurrentHostFiberWithNoPortalsImpl(node: Fiber): Fiber | null {
     tag === HostComponent ||
     tag === HostHoistable ||
     tag === HostSingleton ||
-    tag === HostText
+    tag === HostText ||
+    tag === HostBlock
   ) {
     return node;
   }
@@ -393,6 +398,7 @@ function traverseVisibleInstancesAndTextInstances<A, B, C>(
     const isHostNode =
       child.tag === HostComponent ||
       child.tag === HostSingleton ||
+      child.tag === HostBlock ||
       (enableFragmentRefsTextNodes && child.tag === HostText);
     if (isHostNode && fn(child, a, b, c)) {
       return true;
@@ -404,7 +410,9 @@ function traverseVisibleInstancesAndTextInstances<A, B, C>(
     } else {
       if (
         (searchWithinHosts ||
-          (child.tag !== HostComponent && child.tag !== HostSingleton)) &&
+          (child.tag !== HostComponent &&
+            child.tag !== HostSingleton &&
+            child.tag !== HostBlock)) &&
         traverseVisibleInstancesAndTextInstances(
           child.child,
           searchWithinHosts,
@@ -430,7 +438,8 @@ export function getFragmentParentInstanceOrContainerFiber(
     if (
       parent.tag === HostRoot ||
       parent.tag === HostComponent ||
-      parent.tag === HostSingleton
+      parent.tag === HostSingleton ||
+      parent.tag === HostBlockSlot
     ) {
       return parent;
     }
@@ -450,7 +459,8 @@ export function fiberIsPortaledIntoHost(fiber: Fiber): boolean {
     if (
       parent.tag === HostRoot ||
       parent.tag === HostComponent ||
-      parent.tag === HostSingleton
+      parent.tag === HostSingleton ||
+      parent.tag === HostBlockSlot
     ) {
       break;
     }
@@ -468,7 +478,8 @@ export function getFragmentPortalContainerInfo(fiber: Fiber): null | Container {
     if (
       parent.tag === HostRoot ||
       parent.tag === HostComponent ||
-      parent.tag === HostSingleton
+      parent.tag === HostSingleton ||
+      parent.tag === HostBlockSlot
     ) {
       break;
     }
@@ -516,6 +527,7 @@ function findFragmentInstanceOrTextInstanceSiblings(
     if (
       child.tag === HostComponent ||
       child.tag === HostSingleton ||
+      child.tag === HostBlock ||
       (enableFragmentRefsTextNodes && child.tag === HostText)
     ) {
       if (state.foundSelf) {
@@ -553,7 +565,12 @@ export function getInstanceFromHostFiber<
     case HostComponent:
     case HostSingleton:
     case HostText:
+    case HostBlock:
       return fiber.stateNode;
+    case HostBlockSlot: {
+      const block: Fiber = fiber.return as any;
+      return getBlockSlotParent(block.stateNode, fiber.index) as any;
+    }
     case HostRoot:
       return fiber.stateNode.containerInfo;
     default:
@@ -622,7 +639,8 @@ export function isFragmentContainedByFiber(
     if (
       (current.tag === HostComponent ||
         current.tag === HostRoot ||
-        current.tag === HostSingleton) &&
+        current.tag === HostSingleton ||
+        current.tag === HostBlockSlot) &&
       (current === fiberHostParent || current.alternate === fiberHostParent)
     ) {
       return true;
@@ -719,6 +737,7 @@ function getParentForFragmentAncestors(inst: Fiber | null): Fiber | null {
     inst &&
     inst.tag !== HostComponent &&
     inst.tag !== HostSingleton &&
+    inst.tag !== HostBlockSlot &&
     inst.tag !== HostRoot
   );
   if (inst) {

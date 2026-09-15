@@ -79,6 +79,13 @@ export const enableLegacyCache = __EXPERIMENTAL__;
 
 export const enableAsyncIterableChildren = __EXPERIMENTAL__;
 
+/**
+ * Compiled DOM blocks: a host element subtree rendered from a precompiled
+ * template as a single fiber, with dynamic values patched in place.
+ * Emitted by the (Rust) React Compiler; see compiler/docs/experiments.
+ */
+export const enableCompiledBlocks = __EXPERIMENTAL__;
+
 // Support thenables with status 'pending_weak' in Flight. A weak-pending
 // thenable doesn't keep the stream open; if it resolves before the stream
 // closes for other reasons, its value is emitted, otherwise its reference is

@@ -169,6 +169,7 @@ export * from 'react-reconciler/src/ReactFiberConfigWithNoScopes';
 export * from 'react-reconciler/src/ReactFiberConfigWithNoTestSelectors';
 export * from 'react-reconciler/src/ReactFiberConfigWithNoResources';
 export * from 'react-reconciler/src/ReactFiberConfigWithNoSingletons';
+export * from 'react-reconciler/src/ReactFiberConfigWithNoBlocks';
 export * from './ReactFiberConfigFabricWithViewTransition';
 
 export function appendInitialChild(

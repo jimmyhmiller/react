@@ -1,0 +1,16 @@
+/* A small subset of the Bootstrap styles used by js-framework-benchmark, so
+   that layout work is comparable to the original benchmark's table. */
+body { font-family: sans-serif; font-size: 14px; }
+.container { width: 1170px; margin: 0 auto; }
+.row { display: flex; flex-wrap: wrap; }
+.col-md-6, .col-sm-6 { width: 50%; }
+.btn { display: block; width: 100%; padding: 6px 12px; }
+.table { width: 100%; border-collapse: collapse; }
+.table td { padding: 8px; border-top: 1px solid #ddd; }
+.table-striped tbody tr:nth-of-type(odd) { background-color: #f9f9f9; }
+.danger { background-color: #f2dede; }
+.col-md-1 { width: 8.33%; }
+.col-md-4 { width: 33.33%; }
+.col-md-6 { width: 50%; }
+.glyphicon-remove::before { content: "x"; }
+.preloadicon { display: none; }

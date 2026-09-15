@@ -24,7 +24,16 @@ function restoreStateOfTarget(target: Node) {
   // always receive the correct fiber here
   const internalInstance = getInstanceFromNode(target);
   if (!internalInstance) {
-    // Unmounted
+    // An input inside a compiled block has no fiber; its current props are
+    // stored on the node itself. Otherwise the target is unmounted.
+    const blockNodeProps = getFiberCurrentPropsFromNode(target as any);
+    if (blockNodeProps !== null) {
+      restoreControlledState(
+        target as any,
+        (target as any as Element).localName,
+        blockNodeProps,
+      );
+    }
     return;
   }
 

@@ -47,6 +47,8 @@ import {
   Throw,
   ViewTransitionComponent,
   ActivityComponent,
+  HostBlock,
+  HostBlockSlot,
 } from 'react-reconciler/src/ReactWorkTags';
 import getComponentNameFromType from 'shared/getComponentNameFromType';
 import {REACT_STRICT_MODE_TYPE} from 'shared/ReactSymbols';
@@ -108,6 +110,10 @@ export default function getComponentNameFromFiber(fiber: Fiber): string | null {
       return type;
     case HostPortal:
       return 'Portal';
+    case HostBlock:
+      return 'Block';
+    case HostBlockSlot:
+      return 'BlockSlot';
     case HostRoot:
       return 'Root';
     case HostText:

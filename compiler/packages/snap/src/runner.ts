@@ -34,11 +34,14 @@ import fs from 'fs';
 import path from 'path';
 import {minimize, minimizeRustDelta} from './minimize';
 import {parseInput, parseLanguage, parseSourceType} from './compiler';
+import {assertRustOnlyEnvironmentFlag} from './rust-only-environment';
 import {
   PARSE_CONFIG_PRAGMA_IMPORT,
   PRINT_HIR_IMPORT,
   PRINT_REACTIVE_IR_IMPORT,
   BABEL_PLUGIN_SRC,
+  FIXTURES_PATH,
+  RUST_EXPERIMENTAL_FIXTURES_PATH,
 } from './constants';
 import chalk from 'chalk';
 
@@ -56,6 +59,9 @@ type TestOptions = {
   debug: boolean;
   verbose: boolean;
   rust: boolean;
+  experimental: boolean;
+  forceRustFlag: Array<string>;
+  evalOnly: boolean;
 };
 
 type MinimizeOptions = {
@@ -79,6 +85,31 @@ async function runTestCommand(opts: TestOptions): Promise<void> {
   // so force sync mode when using the Rust backend.
   if (opts.rust) {
     opts.sync = true;
+  }
+  if (opts.experimental && !opts.rust) {
+    console.error(
+      'Error: --experimental fixtures exercise Rust-only compiler features and require --rust.',
+    );
+    process.exit(1);
+  }
+  if (opts.experimental && opts.watch) {
+    console.error('Error: --experimental does not support --watch.');
+    process.exit(1);
+  }
+  const fixturesPath = opts.experimental
+    ? RUST_EXPERIMENTAL_FIXTURES_PATH
+    : FIXTURES_PATH;
+  const forcedRustFlags = opts.forceRustFlag ?? [];
+  if (forcedRustFlags.length !== 0 && !opts.rust) {
+    console.error('Error: --force-rust-flag requires --rust.');
+    process.exit(1);
+  }
+  for (const flag of forcedRustFlags) {
+    assertRustOnlyEnvironmentFlag(flag);
+  }
+  if (opts.evalOnly && opts.update) {
+    console.error('Error: --eval-only cannot be combined with --update.');
+    process.exit(1);
   }
 
   const worker: Worker & typeof runnerWorker = new Worker(WORKER_PATH, {
@@ -163,12 +194,19 @@ async function runTestCommand(opts: TestOptions): Promise<void> {
                 false, // no requireSingleFixture in non-watch mode
                 opts.sync,
                 opts.rust,
+                fixturesPath,
+                forcedRustFlags,
               );
               if (opts.update) {
                 update(results);
                 isSuccess = true;
               } else {
-                isSuccess = report(results, opts.verbose, opts.rust);
+                isSuccess = report(
+                  results,
+                  opts.verbose,
+                  opts.rust,
+                  opts.evalOnly,
+                );
               }
             } catch (e) {
               console.warn('Failed to build compiler with tsup:', e);
@@ -468,7 +506,26 @@ yargs(hideBin(process.argv))
         .default('verbose', false)
         .boolean('rust')
         .describe('rust', 'Use the Rust compiler backend instead of TypeScript')
-        .default('rust', false);
+        .default('rust', false)
+        .boolean('experimental')
+        .describe(
+          'experimental',
+          'Run the fixtures for Rust-only experimental compiler features (requires --rust)',
+        )
+        .default('experimental', false)
+        .array('force-rust-flag')
+        .string('force-rust-flag')
+        .describe(
+          'force-rust-flag',
+          'Enable a Rust-only environment flag for every fixture (requires --rust)',
+        )
+        .default('force-rust-flag', [])
+        .boolean('eval-only')
+        .describe(
+          'eval-only',
+          'Pass fixtures whose evaluated output matches the uncompiled source, ignoring snapshot differences',
+        )
+        .default('eval-only', false);
     },
     async argv => {
       await runTestCommand(argv as TestOptions);
@@ -558,11 +615,13 @@ async function runFixtures(
   requireSingleFixture: boolean,
   sync: boolean,
   enableRust: boolean = false,
+  fixturesPath: string = FIXTURES_PATH,
+  forcedRustFlags: ReadonlyArray<string> = [],
 ): Promise<TestResults> {
   // We could in theory be fancy about tracking the contents of the fixtures
   // directory via our file subscription, but it's simpler to just re-read
   // the directory each time.
-  const fixtures = await getFixtures(filter);
+  const fixtures = await getFixtures(filter, fixturesPath);
   const isOnlyFixture = filter !== null && fixtures.size === 1;
   const shouldLog = debug && (!requireSingleFixture || isOnlyFixture);
 
@@ -579,6 +638,7 @@ async function runFixtures(
             shouldLog,
             true,
             enableRust,
+            forcedRustFlags,
           )
           .then(result => [fixtureName, result]),
       );
@@ -594,6 +654,7 @@ async function runFixtures(
         shouldLog,
         true,
         enableRust,
+        forcedRustFlags,
       );
       entries.push([fixtureName, output]);
     }

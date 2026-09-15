@@ -21,7 +21,7 @@ import {canUseDOM} from 'shared/ExecutionEnvironment';
 
 import getEventTarget from '../getEventTarget';
 import isEventSupported from '../isEventSupported';
-import {getNodeFromInstance} from '../../client/ReactDOMComponentTree';
+import {getEventNodeFromInstance} from '../../client/ReactDOMComponentTree';
 import {updateValueIfChanged} from '../../client/inputValueTracking';
 import {enqueueStateRestore} from '../ReactDOMControlledComponent';
 
@@ -53,7 +53,7 @@ function createAndAccumulateChangeEvent(
 ) {
   // Flag this event loop as needing state restore.
   enqueueStateRestore(target as any as Node);
-  const listeners = accumulateTwoPhaseListeners(inst, 'onChange');
+  const listeners = accumulateTwoPhaseListeners(inst, 'onChange', target);
   if (listeners.length > 0) {
     const event: ReactSyntheticEvent = new SyntheticEvent(
       'onChange',
@@ -109,8 +109,10 @@ function runEventInBatch(dispatchQueue: DispatchQueue) {
   processDispatchQueue(dispatchQueue, 0);
 }
 
-function getInstIfValueChanged(targetInst: Object) {
-  const targetNode = getNodeFromInstance(targetInst);
+function getInstIfValueChanged(
+  targetInst: Object,
+  targetNode: Instance | TextInstance,
+) {
   if (updateValueIfChanged(targetNode as any as HTMLInputElement)) {
     return targetInst;
   }
@@ -119,6 +121,7 @@ function getInstIfValueChanged(targetInst: Object) {
 function getTargetInstForChangeEvent(
   domEventName: DOMEventName,
   targetInst: null | Fiber,
+  targetNode: Instance | TextInstance,
 ) {
   if (domEventName === 'change') {
     return targetInst;
@@ -173,7 +176,7 @@ function handlePropertyChange(nativeEvent) {
   if (nativeEvent.propertyName !== 'value') {
     return;
   }
-  if (getInstIfValueChanged(activeElementInst)) {
+  if (getInstIfValueChanged(activeElementInst, activeElement as any)) {
     manualDispatchChangeEvent(nativeEvent);
   }
 }
@@ -205,6 +208,7 @@ function handleEventsForInputEventPolyfill(
 function getTargetInstForInputEventPolyfill(
   domEventName: DOMEventName,
   targetInst: null | Fiber,
+  targetNode: Instance | TextInstance,
 ) {
   if (
     domEventName === 'selectionchange' ||
@@ -221,7 +225,7 @@ function getTargetInstForInputEventPolyfill(
     // keystroke if user does a key repeat (it'll be a little delayed: right
     // before the second keystroke). Other input methods (e.g., paste) seem to
     // fire selectionchange normally.
-    return getInstIfValueChanged(activeElementInst);
+    return getInstIfValueChanged(activeElementInst, activeElement as any);
   }
 }
 
@@ -243,18 +247,20 @@ function shouldUseClickEvent(elem: any) {
 function getTargetInstForClickEvent(
   domEventName: DOMEventName,
   targetInst: null | Fiber,
+  targetNode: Instance | TextInstance,
 ) {
   if (domEventName === 'click') {
-    return getInstIfValueChanged(targetInst);
+    return getInstIfValueChanged(targetInst, targetNode);
   }
 }
 
 function getTargetInstForInputOrChangeEvent(
   domEventName: DOMEventName,
   targetInst: null | Fiber,
+  targetNode: Instance | TextInstance,
 ) {
   if (domEventName === 'input' || domEventName === 'change') {
-    return getInstIfValueChanged(targetInst);
+    return getInstIfValueChanged(targetInst, targetNode);
   }
 }
 
@@ -277,7 +283,9 @@ function extractEvents(
   eventSystemFlags: EventSystemFlags,
   targetContainer: null | EventTarget,
 ) {
-  const targetNode = targetInst ? getNodeFromInstance(targetInst) : window;
+  const targetNode = targetInst
+    ? getEventNodeFromInstance(targetInst, nativeEventTarget)
+    : window;
 
   let getTargetInstFunc, handleEventFunc;
   if (shouldUseChangeEvent(targetNode)) {
@@ -293,13 +301,15 @@ function extractEvents(
     getTargetInstFunc = getTargetInstForClickEvent;
   } else if (
     targetInst &&
+    // Compiled block fibers have a template object as their type.
+    typeof targetInst.elementType === 'string' &&
     isCustomElement(targetInst.elementType, targetInst.memoizedProps)
   ) {
     getTargetInstFunc = getTargetInstForChangeEvent;
   }
 
   if (getTargetInstFunc) {
-    const inst = getTargetInstFunc(domEventName, targetInst);
+    const inst = getTargetInstFunc(domEventName, targetInst, targetNode);
     if (inst) {
       createAndAccumulateChangeEvent(
         dispatchQueue,

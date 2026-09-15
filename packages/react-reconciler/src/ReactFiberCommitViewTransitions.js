@@ -16,6 +16,7 @@ import {
   HostComponent,
   OffscreenComponent,
   ViewTransitionComponent,
+  HostBlock,
 } from './ReactWorkTags';
 import {
   NoFlags,
@@ -146,7 +147,7 @@ function applyViewTransitionToHostInstancesRecursive(
   if (!supportsMutation) {
     if (enableViewTransitionForPersistenceMode) {
       while (child !== null) {
-        if (child.tag === HostComponent) {
+        if (child.tag === HostComponent || child.tag === HostBlock) {
           const instance: Instance = child.stateNode;
           // TODO: calculate whether component is in viewport
           shouldStartViewTransition = true;
@@ -187,7 +188,7 @@ function applyViewTransitionToHostInstancesRecursive(
   }
   let inViewport = false;
   while (child !== null) {
-    if (child.tag === HostComponent) {
+    if (child.tag === HostComponent || child.tag === HostBlock) {
       const instance: Instance = child.stateNode;
       if (collectMeasurements !== null) {
         const measurement = measureInstance(instance);
@@ -249,7 +250,7 @@ function restoreViewTransitionOnHostInstances(
     return;
   }
   while (child !== null) {
-    if (child.tag === HostComponent) {
+    if (child.tag === HostComponent || child.tag === HostBlock) {
       const instance: Instance = child.stateNode;
       restoreViewTransitionName(instance, child.memoizedProps);
     } else if (
@@ -856,7 +857,7 @@ function measureViewTransitionHostInstancesRecursive(
   if (!supportsMutation) {
     if (enableViewTransitionForPersistenceMode) {
       while (child !== null) {
-        if (child.tag === HostComponent) {
+        if (child.tag === HostComponent || child.tag === HostBlock) {
           const instance: Instance = child.stateNode;
           if (
             previousMeasurements == null ||
@@ -911,7 +912,7 @@ function measureViewTransitionHostInstancesRecursive(
   }
   let inViewport = false;
   while (child !== null) {
-    if (child.tag === HostComponent) {
+    if (child.tag === HostComponent || child.tag === HostBlock) {
       const instance: Instance = child.stateNode;
       if (
         previousMeasurements !== null &&

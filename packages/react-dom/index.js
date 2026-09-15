@@ -20,6 +20,7 @@ export {
   preinitModule,
   requestFormReset,
   unstable_batchedUpdates,
+  unstable_createBlockTemplate,
   useFormState,
   useFormStatus,
   version,

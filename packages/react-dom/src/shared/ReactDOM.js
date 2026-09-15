@@ -14,6 +14,7 @@ import ReactVersion from 'shared/ReactVersion';
 import {isValidContainer} from 'react-dom-bindings/src/client/ReactDOMContainer';
 import {createPortal as createPortalImpl} from 'react-reconciler/src/ReactPortal';
 import {flushSync} from './ReactDOMFlushSync';
+import {createBlockTemplate} from 'react-dom-bindings/src/shared/ReactDOMBlockTemplate';
 
 import {
   prefetchDNS,
@@ -74,6 +75,7 @@ export {
   createPortal,
   flushSync,
   batchedUpdates as unstable_batchedUpdates,
+  createBlockTemplate as unstable_createBlockTemplate,
   prefetchDNS,
   preconnect,
   preload,

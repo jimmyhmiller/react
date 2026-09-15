@@ -35,6 +35,8 @@ import {
   HostSingleton,
   HostText,
   ScopeComponent,
+  HostBlock,
+  HostBlockSlot,
 } from 'react-reconciler/src/ReactWorkTags';
 import {getLowestCommonAncestor} from 'react-reconciler/src/ReactFiberTreeReflection';
 
@@ -44,7 +46,11 @@ import {
   getEventListenerSet,
   getEventHandlerListeners,
 } from '../client/ReactDOMComponentTree';
-import {COMMENT_NODE, DOCUMENT_NODE} from '../client/HTMLNodeType';
+import {
+  getBlockEventListener,
+  getBlockSlotParent,
+} from '../client/ReactDOMBlocks';
+import {COMMENT_NODE, DOCUMENT_NODE, TEXT_NODE} from '../client/HTMLNodeType';
 import {batchedUpdates} from './ReactDOMUpdateBatching';
 import getListener from './getListener';
 import {passiveBrowserEventsSupported} from './checkPassiveEvents';
@@ -55,6 +61,7 @@ import {
   enableScopeAPI,
   disableCommentsAsDOMContainers,
   enableScrollEndPolyfill,
+  enableCompiledBlocks,
 } from 'shared/ReactFeatureFlags';
 import {createEventListenerWrapperWithPriority} from './ReactDOMEventListener';
 import {
@@ -269,10 +276,17 @@ function processDispatchQueueItemsInOrder(
   inCapturePhase: boolean,
 ): void {
   let previousInstance;
+  // Nodes inside a compiled block share the block's fiber, so a change of
+  // currentTarget also marks a propagation boundary.
+  let previousCurrentTarget;
   if (inCapturePhase) {
     for (let i = dispatchListeners.length - 1; i >= 0; i--) {
       const {instance, currentTarget, listener} = dispatchListeners[i];
-      if (instance !== previousInstance && event.isPropagationStopped()) {
+      if (
+        (instance !== previousInstance ||
+          currentTarget !== previousCurrentTarget) &&
+        event.isPropagationStopped()
+      ) {
         return;
       }
       if (__DEV__ && instance !== null) {
@@ -287,11 +301,16 @@ function processDispatchQueueItemsInOrder(
         executeDispatch(event, listener, currentTarget);
       }
       previousInstance = instance;
+      previousCurrentTarget = currentTarget;
     }
   } else {
     for (let i = 0; i < dispatchListeners.length; i++) {
       const {instance, currentTarget, listener} = dispatchListeners[i];
-      if (instance !== previousInstance && event.isPropagationStopped()) {
+      if (
+        (instance !== previousInstance ||
+          currentTarget !== previousCurrentTarget) &&
+        event.isPropagationStopped()
+      ) {
         return;
       }
       if (__DEV__ && instance !== null) {
@@ -306,6 +325,7 @@ function processDispatchQueueItemsInOrder(
         executeDispatch(event, listener, currentTarget);
       }
       previousInstance = instance;
+      previousCurrentTarget = currentTarget;
     }
   }
 }
@@ -728,10 +748,43 @@ export function accumulateSinglePhaseListeners(
 
   let instance = targetFiber;
   let lastHostComponent = null;
+  // The slot through which the path entered the current block, if any.
+  let lastBlockSlotIndex = -1;
 
   // Accumulate all instances and listeners via the target -> root path.
   while (instance !== null) {
     const {stateNode, tag} = instance;
+    if (enableCompiledBlocks && tag === HostBlockSlot) {
+      lastBlockSlotIndex = instance.index;
+    } else if (
+      enableCompiledBlocks &&
+      tag === HostBlock &&
+      stateNode !== null
+    ) {
+      // Nodes inside a block have no fibers. Walk the block's DOM from where
+      // the path enters the block (the event target, or the parent element of
+      // the slot we came from) up to the block root.
+      let node: ?Node =
+        lastBlockSlotIndex !== -1
+          ? getBlockSlotParent(stateNode, lastBlockSlotIndex)
+          : getEventTarget(nativeEvent);
+      lastBlockSlotIndex = -1;
+      while (node != null) {
+        if (reactEventName !== null) {
+          const listener = getBlockEventListener(node, reactEventName);
+          if (listener !== null) {
+            listeners.push(
+              createDispatchListener(instance, listener, node as any),
+            );
+          }
+        }
+        if (node === stateNode || accumulateTargetOnly) {
+          break;
+        }
+        node = node.parentNode;
+      }
+      lastHostComponent = stateNode;
+    }
     // Handle listeners that are on HostComponents (i.e. <div>)
     if (
       (tag === HostComponent ||
@@ -839,10 +892,13 @@ export function accumulateSinglePhaseListeners(
 export function accumulateTwoPhaseListeners(
   targetFiber: Fiber | null,
   reactName: string,
+  nativeEventTarget: null | EventTarget,
 ): Array<DispatchListener> {
   const captureName = reactName + 'Capture';
   const listeners: Array<DispatchListener> = [];
   let instance = targetFiber;
+  // The slot through which the path entered the current block, if any.
+  let lastBlockSlotIndex = -1;
 
   // Accumulate all instances and listeners via the target -> root path.
   while (instance !== null) {
@@ -867,6 +923,37 @@ export function accumulateTwoPhaseListeners(
           createDispatchListener(instance, bubbleListener, currentTarget),
         );
       }
+    } else if (enableCompiledBlocks && tag === HostBlockSlot) {
+      lastBlockSlotIndex = instance.index;
+    } else if (
+      enableCompiledBlocks &&
+      tag === HostBlock &&
+      stateNode !== null
+    ) {
+      // See accumulateSinglePhaseListeners.
+      let node: ?Node =
+        lastBlockSlotIndex !== -1
+          ? getBlockSlotParent(stateNode, lastBlockSlotIndex)
+          : getBlockEventStartNode(nativeEventTarget);
+      lastBlockSlotIndex = -1;
+      while (node != null) {
+        const captureListener = getBlockEventListener(node, captureName);
+        if (captureListener !== null) {
+          listeners.unshift(
+            createDispatchListener(instance, captureListener, node as any),
+          );
+        }
+        const bubbleListener = getBlockEventListener(node, reactName);
+        if (bubbleListener !== null) {
+          listeners.push(
+            createDispatchListener(instance, bubbleListener, node as any),
+          );
+        }
+        if (node === stateNode) {
+          break;
+        }
+        node = node.parentNode;
+      }
     }
     if (instance.tag === HostRoot) {
       return listeners;
@@ -876,6 +963,14 @@ export function accumulateTwoPhaseListeners(
   // If we didn't reach the root it means we're unmounted and shouldn't
   // dispatch any events on the target.
   return [];
+}
+
+function getBlockEventStartNode(nativeEventTarget: null | EventTarget): ?Node {
+  if (nativeEventTarget == null) {
+    return null;
+  }
+  const node: Node = nativeEventTarget as any;
+  return node.nodeType === TEXT_NODE ? node.parentNode : node;
 }
 
 function getParent(inst: Fiber | null): Fiber | null {

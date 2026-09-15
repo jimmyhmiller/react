@@ -999,6 +999,22 @@ function setProp(
   trackHostMutation();
 }
 
+const emptyBlockProps = {};
+
+// Sets a prop on an element inside a compiled block (see ReactDOMBlocks). The
+// compiler only emits props for blocks whose handling does not depend on other
+// props of the same element (e.g. no form actions, `children` or
+// `dangerouslySetInnerHTML`), so an empty props object is sufficient.
+export function setBlockProp(
+  domElement: Element,
+  tag: string,
+  key: string,
+  value: mixed,
+  prevValue: mixed,
+): void {
+  setProp(domElement, tag, key, value, emptyBlockProps, prevValue);
+}
+
 function setPropOnCustomElement(
   domElement: Element,
   tag: string,

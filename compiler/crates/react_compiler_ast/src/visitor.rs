@@ -87,6 +87,9 @@ pub trait Visitor<'ast> {
     }
     fn enter_identifier(&mut self, _node: &'ast Identifier, _scope_stack: &[ScopeId]) {}
     fn enter_jsx_identifier(&mut self, _node: &'ast JSXIdentifier, _scope_stack: &[ScopeId]) {}
+    /// Called for every JSX element before its opening element is visited.
+    /// Unlike `enter_jsx_opening_element`, this exposes the closing element.
+    fn enter_jsx_element(&mut self, _node: &'ast JSXElement, _scope_stack: &[ScopeId]) {}
     fn enter_jsx_opening_element(
         &mut self,
         _node: &'ast JSXOpeningElement,
@@ -711,6 +714,7 @@ impl<'a> AstWalker<'a> {
     }
 
     fn walk_jsx_element<'ast>(&mut self, v: &mut impl Visitor<'ast>, node: &'ast JSXElement) {
+        v.enter_jsx_element(node, &self.scope_stack);
         v.enter_jsx_opening_element(&node.opening_element, &self.scope_stack);
         self.walk_jsx_element_name(v, &node.opening_element.name);
         v.leave_jsx_opening_element(&node.opening_element, &self.scope_stack);

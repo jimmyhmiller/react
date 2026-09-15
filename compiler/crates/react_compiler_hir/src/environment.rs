@@ -5,6 +5,7 @@ use react_compiler_diagnostics::CompilerError;
 use react_compiler_diagnostics::CompilerErrorDetail;
 use react_compiler_diagnostics::ErrorCategory;
 
+use crate::block_template::{BlockNode, BlockTemplate, ReturnsBlock};
 use crate::default_module_type_provider::default_module_type_provider;
 use crate::environment_config::EnvironmentConfig;
 use crate::globals::Global;
@@ -107,6 +108,22 @@ pub struct Environment {
     // Outlined functions: functions extracted from the component during outlining passes
     outlined_functions: Vec<OutlinedFunctionEntry>,
 
+    // Compiled block templates to emit at module scope (CompileJsxBlocks).
+    block_templates: Vec<BlockTemplate>,
+    /// Names of the block templates known in this module, by structure key
+    /// (see `BlockNode::structure_key`), so identical templates share a name.
+    block_template_names: FxHashMap<String, String>,
+    returns_block: ReturnsBlock,
+    /// Values the compiled function places into block slots (set by
+    /// `CompileJsxBlocks`).
+    block_slot_values: FxHashSet<IdentifierId>,
+    /// Nested functions whose every returned value is a block element (set by
+    /// `CompileJsxBlocks`).
+    block_functions: FxHashSet<FunctionId>,
+    /// List item callbacks selected by `MemoizeListItems`, with the variable
+    /// that holds each list's `unstable_useListItemMemoCache()` result.
+    list_item_callbacks: FxHashMap<FunctionId, IdentifierId>,
+
     // Known names for collision-aware UID generation. Lazily populated from
     // identifiers on first use, then updated with each generated name.
     // Matches Babel's generateUid behavior of checking hasBinding/hasReference.
@@ -203,6 +220,12 @@ impl Environment {
             default_nonmutating_hook: None,
             default_mutating_hook: None,
             outlined_functions: Vec::new(),
+            block_templates: Vec::new(),
+            block_template_names: FxHashMap::default(),
+            returns_block: ReturnsBlock::No,
+            block_slot_values: FxHashSet::default(),
+            block_functions: FxHashSet::default(),
+            list_item_callbacks: FxHashMap::default(),
             uid_known_names: None,
             config,
         }
@@ -251,6 +274,12 @@ impl Environment {
             default_nonmutating_hook: self.default_nonmutating_hook.clone(),
             default_mutating_hook: self.default_mutating_hook.clone(),
             outlined_functions: Vec::new(),
+            block_templates: Vec::new(),
+            block_template_names: self.block_template_names.clone(),
+            returns_block: ReturnsBlock::No,
+            block_slot_values: FxHashSet::default(),
+            block_functions: FxHashSet::default(),
+            list_item_callbacks: FxHashMap::default(),
             uid_known_names: self.uid_known_names.clone(),
         }
     }
@@ -947,9 +976,97 @@ impl Environment {
             .push(OutlinedFunctionEntry { func, fn_type });
     }
 
+    /// Record a list item callback and the variable holding its list's memo
+    /// cache (see `MemoizeListItems`).
+    pub fn add_list_item_callback(&mut self, callback: FunctionId, cache: IdentifierId) {
+        self.list_item_callbacks.insert(callback, cache);
+    }
+
+    /// The memo cache variable of a list item callback, if it is one.
+    pub fn list_item_callback_cache(&self, callback: FunctionId) -> Option<IdentifierId> {
+        self.list_item_callbacks.get(&callback).copied()
+    }
+
     /// Get the outlined functions accumulated during compilation.
     pub fn get_outlined_functions(&self) -> &[OutlinedFunctionEntry] {
         &self.outlined_functions
+    }
+
+    /// Register a compiled block template to be emitted at module scope and
+    /// return its binding name. A template identical to one already known in
+    /// the module reuses that template's name. The function still lists the
+    /// template, so that it is emitted whenever this function is; the
+    /// program emits each name once.
+    pub fn add_block_template(&mut self, root: BlockNode) -> String {
+        let key = root.structure_key();
+        let name = match self.block_template_names.get(&key) {
+            Some(name) => name.clone(),
+            None => {
+                let name = self.generate_block_template_name();
+                self.block_template_names.insert(key, name.clone());
+                name
+            }
+        };
+        if !self.block_templates.iter().any(|t| t.name == name) {
+            self.block_templates.push(BlockTemplate {
+                name: name.clone(),
+                root,
+            });
+        }
+        name
+    }
+
+    fn generate_block_template_name(&mut self) -> String {
+        loop {
+            let name = self.generate_globally_unique_identifier_name(Some("BlockTemplate"));
+            // Environments that were not seeded with the module's known names
+            // (outlined functions) must still avoid the names of known templates.
+            if !self.block_template_names.values().any(|known| known == &name) {
+                return name;
+            }
+        }
+    }
+
+    /// Seed the module's known block templates (from ProgramContext).
+    pub fn seed_block_template_names(&mut self, names: &FxHashMap<String, String>) {
+        self.block_template_names
+            .extend(names.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+
+    /// The block templates known after this compilation, by structure key.
+    pub fn block_template_names(&self) -> &FxHashMap<String, String> {
+        &self.block_template_names
+    }
+
+    /// Records what the compiled function returns in terms of blocks (see
+    /// `ReturnsBlock`). Set by `CompileJsxBlocks`.
+    pub fn set_returns_block(&mut self, value: ReturnsBlock) {
+        self.returns_block = value;
+    }
+
+    pub fn returns_block(&self) -> ReturnsBlock {
+        self.returns_block
+    }
+
+    pub fn set_block_slot_values(&mut self, values: FxHashSet<IdentifierId>) {
+        self.block_slot_values = values;
+    }
+
+    pub fn block_slot_values(&self) -> &FxHashSet<IdentifierId> {
+        &self.block_slot_values
+    }
+
+    pub fn add_block_function(&mut self, func: FunctionId) {
+        self.block_functions.insert(func);
+    }
+
+    pub fn is_block_function(&self, func: FunctionId) -> bool {
+        self.block_functions.contains(&func)
+    }
+
+    /// Take the compiled block templates, leaving the vec empty.
+    pub fn take_block_templates(&mut self) -> Vec<BlockTemplate> {
+        std::mem::take(&mut self.block_templates)
     }
 
     /// Take the outlined functions, leaving the vec empty.

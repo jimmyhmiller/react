@@ -26,6 +26,8 @@ import {
   HostText,
   HostPortal,
   DehydratedFragment,
+  HostBlock,
+  HostBlockSlot,
 } from './ReactWorkTags';
 import {ContentReset, Placement} from './ReactFiberFlags';
 import {
@@ -56,8 +58,20 @@ import {
   acquireSingletonInstance,
   releaseSingletonInstance,
   isSingletonScope,
+  commitBlockUpdate,
+  getBlockSlotParent,
+  getBlockSlotPosition,
+  getBlockSlotNextStaticSibling,
+  getBlockSlotCount,
+  getBlockSlotValue,
+  blockSlotNeedsCommit,
+  getBlockSlotInlineNode,
+  setBlockSlotContent,
+  adoptBlockInlineItem,
+  getBlockValues,
 } from './ReactFiberConfig';
 import {captureCommitPhaseError} from './ReactFiberWorkLoop';
+import {getBlockSlotFiberItems} from './ReactFiberBlockSlots';
 import {trackHostMutation} from './ReactFiberMutationTracking';
 
 import {runWithFiberInDEV} from './ReactCurrentFiber';
@@ -139,6 +153,87 @@ export function commitHostUpdate(
     // Mutations are tracked manually from within commitUpdate.
   } catch (error) {
     captureCommitPhaseError(finishedWork, finishedWork.return, error);
+  }
+}
+
+export function commitHostBlockUpdate(
+  finishedWork: Fiber,
+  newProps: any,
+  oldValues: any,
+): void {
+  try {
+    if (__DEV__) {
+      runWithFiberInDEV(
+        finishedWork,
+        commitBlockUpdateImpl,
+        finishedWork,
+        oldValues,
+        newProps.v,
+      );
+    } else {
+      commitBlockUpdateImpl(finishedWork, oldValues, newProps.v);
+    }
+    trackHostMutation();
+  } catch (error) {
+    captureCommitPhaseError(finishedWork, finishedWork.return, error);
+  }
+}
+
+// A new block fiber that adopted the instance of an inline list item (see
+// updateHostBlock) takes the instance over. Returns the item's committed
+// values, which the block's values are then applied over.
+export function commitHostBlockAdoption(
+  finishedWork: Fiber,
+): $ReadOnlyArray<mixed> {
+  const item = finishedWork.memoizedState;
+  finishedWork.memoizedState = null;
+  adoptBlockInlineItem(item, finishedWork);
+  return getBlockValues(finishedWork.stateNode);
+}
+
+function commitBlockUpdateImpl(
+  finishedWork: Fiber,
+  oldValues: $ReadOnlyArray<mixed>,
+  newValues: $ReadOnlyArray<mixed>,
+): void {
+  const block: Instance = finishedWork.stateNode;
+  const template = finishedWork.type;
+  commitBlockUpdate(block, template, oldValues, newValues);
+  // Inline slot content. Deletions and placements of slot fibers have already
+  // been committed. Slots are updated in template order so that new content is
+  // inserted relative to the final nodes of earlier slots.
+  const slotCount = getBlockSlotCount(template);
+  let slotFiber = finishedWork.child;
+  for (let i = 0; i < slotCount; i++) {
+    const currentSlotFiber = slotFiber;
+    const hasFiber = slotFiber !== null && slotFiber.index === i;
+    if (hasFiber) {
+      slotFiber = (slotFiber as any).sibling;
+    }
+    const oldValue = getBlockSlotValue(template, oldValues, i);
+    const newValue = getBlockSlotValue(template, newValues, i);
+    if (!blockSlotNeedsCommit(oldValue, newValue)) {
+      continue;
+    }
+    if (hasFiber && (currentSlotFiber as any).memoizedProps.list === null) {
+      // The slot now renders through its fiber; remove any inline content.
+      setBlockSlotContent(block, i, null, null, null);
+    } else {
+      // Inline content, or a list whose items with fibers are the slot
+      // fiber's children.
+      setBlockSlotContent(
+        block,
+        i,
+        newValue,
+        getBlockSlotInsertionPoint(finishedWork, i, true),
+        hasFiber
+          ? getBlockSlotFiberItems(
+              currentSlotFiber as any,
+              (newValue as any).length,
+            )
+          : null,
+      );
+    }
   }
 }
 
@@ -264,7 +359,8 @@ function isHostParent(fiber: Fiber): boolean {
     (supportsSingletons
       ? fiber.tag === HostSingleton && isSingletonScope(fiber.type)
       : false) ||
-    fiber.tag === HostPortal
+    fiber.tag === HostPortal ||
+    fiber.tag === HostBlockSlot
   );
 }
 
@@ -290,6 +386,7 @@ function getHostSibling(fiber: Fiber): ?Instance {
     while (
       node.tag !== HostComponent &&
       node.tag !== HostText &&
+      node.tag !== HostBlock &&
       node.tag !== DehydratedFragment
     ) {
       // If this is a host singleton we go deeper if it's not a special
@@ -327,6 +424,85 @@ function getHostSibling(fiber: Fiber): ?Instance {
   }
 }
 
+// Returns the node to insert new content of slot `slotIndex` of `block`
+// before: the first node rendered by a later slot at the same position (inline
+// content, or a host node of a slot fiber), or else the static node that
+// follows the slot (null when the slot ends its parent). During placement,
+// host nodes that are not yet placed are skipped; once the block's children
+// have been committed (`childrenCommitted`), every host node is in place.
+function getBlockSlotInsertionPoint(
+  block: Fiber,
+  slotIndex: number,
+  childrenCommitted: boolean,
+): null | Instance | TextInstance {
+  const template = block.type;
+  const position = getBlockSlotPosition(template, slotIndex);
+  const slotCount = getBlockSlotCount(template);
+  for (
+    let i = slotIndex + 1;
+    i < slotCount && getBlockSlotPosition(template, i) === position;
+    i++
+  ) {
+    const inlineNode = getBlockSlotInlineNode(block.stateNode, i);
+    if (inlineNode !== null) {
+      return inlineNode as any;
+    }
+    let slot = block.child;
+    while (slot !== null && slot.index !== i) {
+      slot = slot.sibling;
+    }
+    if (slot !== null) {
+      const hostNode = getFirstStableHostNode(slot, childrenCommitted);
+      if (hostNode !== null) {
+        return hostNode;
+      }
+    }
+  }
+  return getBlockSlotNextStaticSibling(block.stateNode, slotIndex) as any;
+}
+
+// The first host node below `parent` (not descending into portals or other
+// host nodes) that is already in the DOM. Nodes with a pending placement are
+// not in the DOM yet, unless the placements have been committed.
+function getFirstStableHostNode(
+  parent: Fiber,
+  placementsCommitted: boolean,
+): Instance | null {
+  let node: Fiber | null = parent.child;
+  while (node !== null) {
+    let current: Fiber = node;
+    if (
+      current.tag === HostComponent ||
+      current.tag === HostText ||
+      current.tag === HostBlock
+    ) {
+      if (placementsCommitted || !(current.flags & Placement)) {
+        return current.stateNode;
+      }
+    } else if (
+      current.tag !== HostPortal &&
+      (placementsCommitted || !(current.flags & Placement)) &&
+      current.child !== null
+    ) {
+      const child: Fiber = current.child;
+      child.return = current;
+      node = child;
+      continue;
+    }
+    while (current.sibling === null) {
+      const returnFiber: Fiber | null = current.return;
+      if (returnFiber === null || returnFiber === parent) {
+        return null;
+      }
+      current = returnFiber;
+    }
+    const sibling: Fiber = current.sibling;
+    sibling.return = current.return;
+    node = sibling;
+  }
+  return null;
+}
+
 function insertOrAppendPlacementNodeIntoContainer(
   node: Fiber,
   before: ?Instance,
@@ -334,7 +510,7 @@ function insertOrAppendPlacementNodeIntoContainer(
   parentFragmentInstances: null | Array<FragmentInstanceType>,
 ): void {
   const {tag} = node;
-  const isHost = tag === HostComponent || tag === HostText;
+  const isHost = tag === HostComponent || tag === HostText || tag === HostBlock;
   if (isHost) {
     const stateNode = node.stateNode;
     if (before) {
@@ -398,7 +574,7 @@ function insertOrAppendPlacementNode(
   parentFragmentInstances: null | Array<FragmentInstanceType>,
 ): void {
   const {tag} = node;
-  const isHost = tag === HostComponent || tag === HostText;
+  const isHost = tag === HostComponent || tag === HostText || tag === HostBlock;
   if (isHost) {
     const stateNode = node.stateNode;
     if (before) {
@@ -514,6 +690,28 @@ function commitPlacement(finishedWork: Fiber): void {
       const before = getHostSibling(finishedWork);
       // We only have the top Fiber that was inserted but we need to recurse down its
       // children to find all the terminal nodes.
+      insertOrAppendPlacementNode(
+        finishedWork,
+        before,
+        parent,
+        parentFragmentInstances,
+      );
+      break;
+    }
+    case HostBlockSlot: {
+      if (hostParentFiber.memoizedProps.list !== null) {
+        // The block positions the items of a list, including those with
+        // fibers, when it commits.
+        break;
+      }
+      const block: Fiber = hostParentFiber.return as any;
+      const slotIndex = hostParentFiber.index;
+      const parent: Instance = getBlockSlotParent(block.stateNode, slotIndex);
+      // The insertion point may be a text node, which is a valid reference
+      // node for insertBefore.
+      const before: ?Instance =
+        getHostSibling(finishedWork) ??
+        (getBlockSlotInsertionPoint(block, slotIndex, false) as any);
       insertOrAppendPlacementNode(
         finishedWork,
         before,

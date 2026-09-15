@@ -13,6 +13,7 @@ import type {Lanes, Lane} from './ReactFiberLane';
 import type {ReactScopeInstance, ReactContext} from 'shared/ReactTypes';
 import type {
   Instance,
+  TextInstance,
   Type,
   Props,
   Container,
@@ -42,9 +43,11 @@ import {
   enableViewTransition,
   enableViewTransitionParentEnterExit,
   enableSuspenseyImages,
+  enableCompiledBlocks,
 } from 'shared/ReactFeatureFlags';
 
 import {now} from './Scheduler';
+import {getBlockSlotFiberItems} from './ReactFiberBlockSlots';
 
 import {
   FunctionComponent,
@@ -76,6 +79,8 @@ import {
   Throw,
   ViewTransitionComponent,
   ActivityComponent,
+  HostBlock,
+  HostBlockSlot,
 } from './ReactWorkTags';
 import {
   NoMode,
@@ -129,6 +134,17 @@ import {
   mayResourceSuspendCommit,
   preloadInstance,
   preloadResource,
+  createBlockInstance,
+  blockValuesChanged,
+  getBlockSlotParent,
+  getBlockSlotNextStaticSibling,
+  getBlockSlotCount,
+  getBlockSlotValue,
+  getBlockSlotPosition,
+  blockSlotNeedsCommit,
+  getBlockSlotInlineNode,
+  setBlockSlotContent,
+  insertBefore,
 } from './ReactFiberConfig';
 import {
   getRootHostContainer,
@@ -254,7 +270,11 @@ function appendAllChildren(
     // children to find all the terminal nodes.
     let node = workInProgress.child;
     while (node !== null) {
-      if (node.tag === HostComponent || node.tag === HostText) {
+      if (
+        node.tag === HostComponent ||
+        node.tag === HostText ||
+        node.tag === HostBlock
+      ) {
         appendInitialChild(parent, node.stateNode);
       } else if (
         node.tag === HostPortal ||
@@ -352,6 +372,138 @@ function appendAllChildren(
 }
 
 // An unfortunate fork of appendAllChildren because we have two different parent types.
+// Renders the inline content of the slots without fibers, then inserts the
+// host nodes rendered by each slot fiber at its slot's position. Slots are
+// handled in template order, and a slot fiber's content goes before the inline
+// content of any later slot at the same position, which preserves document
+// order.
+function appendAllChildrenToBlock(
+  block: Instance,
+  // The fiber's type, a template of the renderer.
+  template: any,
+  values: $ReadOnlyArray<mixed>,
+  workInProgress: Fiber,
+) {
+  const slotCount = getBlockSlotCount(template);
+  let slotFiber = workInProgress.child;
+  for (let i = 0; i < slotCount; i++) {
+    if (slotFiber !== null && slotFiber.index === i) {
+      slotFiber = slotFiber.sibling;
+      continue;
+    }
+    setBlockSlotContent(
+      block,
+      i,
+      getBlockSlotValue(template, values, i),
+      getBlockSlotNextStaticSibling(block, i),
+      null,
+    );
+  }
+  let slot = workInProgress.child;
+  while (slot !== null) {
+    const before = getBlockSlotMountInsertionPoint(block, template, slot.index);
+    const list = slot.pendingProps.list;
+    if (list !== null) {
+      // The block renders the list, including the instances of the items that
+      // have fibers.
+      setBlockSlotContent(
+        block,
+        slot.index,
+        list,
+        before as any,
+        getBlockSlotFiberItems(slot, list.length),
+      );
+      slot = slot.sibling;
+      continue;
+    }
+    const parent = getBlockSlotParent(block, slot.index);
+    const firstChild = slot.child;
+    let node: Fiber;
+    if (firstChild !== null) {
+      node = firstChild;
+    } else {
+      slot = slot.sibling;
+      continue;
+    }
+    traverse: while (true) {
+      if (
+        node.tag === HostComponent ||
+        node.tag === HostText ||
+        node.tag === HostBlock
+      ) {
+        if (before === null) {
+          appendInitialChild(parent, node.stateNode);
+        } else {
+          insertBefore(parent, node.stateNode, before);
+        }
+      } else if (
+        node.tag === HostPortal ||
+        // $FlowFixMe[constant-condition]
+        (supportsSingletons ? node.tag === HostSingleton : false)
+      ) {
+        // Portals and singletons are placed independently.
+      } else if (node.child !== null) {
+        const child: Fiber = node.child;
+        child.return = node;
+        node = child;
+        continue;
+      }
+      while (node.sibling === null) {
+        const returnFiber: Fiber | null = node.return;
+        if (returnFiber === null || returnFiber === slot) {
+          break traverse;
+        }
+        node = returnFiber;
+      }
+      const sibling: Fiber = node.sibling;
+      sibling.return = node.return;
+      node = sibling;
+    }
+    slot = slot.sibling;
+  }
+}
+
+function getBlockSlotMountInsertionPoint(
+  block: Instance,
+  template: any,
+  slotIndex: number,
+): null | Instance | TextInstance {
+  const position = getBlockSlotPosition(template, slotIndex);
+  const slotCount = getBlockSlotCount(template);
+  for (
+    let i = slotIndex + 1;
+    i < slotCount && getBlockSlotPosition(template, i) === position;
+    i++
+  ) {
+    const node = getBlockSlotInlineNode(block, i);
+    if (node !== null) {
+      return node as any;
+    }
+  }
+  return getBlockSlotNextStaticSibling(block, slotIndex) as any;
+}
+
+// Whether committing this block update changes its non-slot holes or the
+// inline content of a slot.
+function blockNeedsUpdate(
+  template: any,
+  oldValues: $ReadOnlyArray<mixed>,
+  newValues: $ReadOnlyArray<mixed>,
+): boolean {
+  if (blockValuesChanged(template, oldValues, newValues)) {
+    return true;
+  }
+  const slotCount = getBlockSlotCount(template);
+  for (let i = 0; i < slotCount; i++) {
+    const oldValue = getBlockSlotValue(template, oldValues, i);
+    const newValue = getBlockSlotValue(template, newValues, i);
+    if (blockSlotNeedsCommit(oldValue, newValue)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function appendAllChildrenToContainer(
   containerChildSet: ChildSet,
   workInProgress: Fiber,
@@ -1470,6 +1622,53 @@ function completeWork(
         renderLanes,
       );
       return null;
+    }
+    case HostBlock: {
+      if (enableCompiledBlocks) {
+        const template = workInProgress.type;
+        if (current !== null && workInProgress.stateNode != null) {
+          const oldProps = current.memoizedProps;
+          if (
+            oldProps !== newProps &&
+            blockNeedsUpdate(template, oldProps.v, newProps.v)
+          ) {
+            markUpdate(workInProgress);
+          }
+        } else if (workInProgress.stateNode != null) {
+          // The block adopted the instance of an inline list item (see
+          // updateHostBlock). Its slot fibers place their content like in a
+          // mounted block, and the commit phase adopts the instance and
+          // applies the new values.
+          markUpdate(workInProgress);
+        } else {
+          const instance = createBlockInstance(
+            template,
+            newProps.v,
+            getRootHostContainer(),
+            getHostContext(),
+            workInProgress,
+          );
+          appendAllChildrenToBlock(
+            instance,
+            template,
+            newProps.v,
+            workInProgress,
+          );
+          workInProgress.stateNode = instance;
+        }
+        bubbleProperties(workInProgress);
+        return null;
+      }
+      break;
+    }
+    case HostBlockSlot: {
+      if (enableCompiledBlocks) {
+        // The adoption candidates are only needed while rendering the slot.
+        workInProgress.memoizedState = null;
+        bubbleProperties(workInProgress);
+        return null;
+      }
+      break;
     }
     case HostText: {
       const newText = newProps;

@@ -593,5 +593,17 @@
   "605": "Recoverable Exception: This is not a real error! It's an implementation detail of `use` to interrupt the current render so a downstream renderer can recover it. You must either rethrow it immediately, or move the `use` call outside of the `try/catch` block. Capturing without rethrowing will lead to unexpected behavior.",
   "606": "Expected a suspended recoverable. This is a bug in React. Please file an issue.",
   "607": "This library called use() to suspend in a previous render but did not call use() when it finished. This indicates an incorrect use of use(). Learn more: https://react.dev/warnings/conditional-use-of-use",
-  "608": "A client reference was blocked on a row that has not been received yet. This is a bug in React."
+  "608": "A client reference was blocked on a row that has not been received yet. This is a bug in React.",
+  "609": "The current renderer does not support compiled blocks. This error is likely caused by a bug in React. Please file an issue.",
+  "610": "Compiled blocks do not support startGestureTransition() yet.",
+  "611": "Expected a compiled block root. This error is likely caused by a bug in React. Please file an issue.",
+  "612": "Compiled blocks do not support hydration yet.",
+  "613": "Invalid block template: hole %s is not used by the template.",
+  "614": "Invalid block template: hole %s is used more than once.",
+  "615": "Invalid block template: an input cannot have children.",
+  "616": "Invalid block template child.",
+  "617": "Invalid block template: event listener \"%s\" must be a dynamic prop.",
+  "618": "Compiled blocks can only be rendered inside HTML content, not inside <svg> or <math>.",
+  "619": "Compiled blocks are not enabled in this build of React.",
+  "620": "Compiled blocks cannot be rendered on the server yet. Compile server-rendered components without enableJsxBlocks."
 }

@@ -19,7 +19,7 @@ import {isReplayingEvent} from '../CurrentReplayingEvent';
 import {SyntheticMouseEvent, SyntheticPointerEvent} from '../SyntheticEvent';
 import {
   getClosestInstanceFromNode,
-  getNodeFromInstance,
+  getEventNodeFromInstance,
   isContainerMarkedAsRoot,
 } from '../../client/ReactDOMComponentTree';
 import {accumulateEnterLeaveTwoPhaseListeners} from '../DOMPluginEventSystem';
@@ -28,6 +28,7 @@ import {
   HostComponent,
   HostSingleton,
   HostText,
+  HostBlock,
 } from 'react-reconciler/src/ReactWorkTags';
 import {getNearestMountedFiber} from 'react-reconciler/src/ReactFiberTreeReflection';
 
@@ -109,7 +110,10 @@ function extractEvents(
       const tag = to.tag;
       if (
         to !== nearestMounted ||
-        (tag !== HostComponent && tag !== HostSingleton && tag !== HostText)
+        (tag !== HostComponent &&
+          tag !== HostSingleton &&
+          tag !== HostText &&
+          tag !== HostBlock)
       ) {
         to = null;
       }
@@ -136,8 +140,20 @@ function extractEvents(
     eventTypePrefix = 'pointer';
   }
 
-  const fromNode = from == null ? win : getNodeFromInstance(from);
-  const toNode = to == null ? win : getNodeFromInstance(to);
+  const fromNode =
+    from == null
+      ? win
+      : getEventNodeFromInstance(from, isOutEvent ? nativeEventTarget : null);
+  const toNode =
+    to == null
+      ? win
+      : getEventNodeFromInstance(
+          to,
+          isOutEvent
+            ? ((nativeEvent.relatedTarget ||
+                (nativeEvent as any).toElement) as any)
+            : nativeEventTarget,
+        );
 
   const leave: KnownReactSyntheticEvent = new SyntheticEventCtor(
     leaveEventType,

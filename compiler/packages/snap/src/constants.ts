@@ -35,6 +35,13 @@ export const BABEL_PLUGIN_RUST_ROOT = path.normalize(
 export const BABEL_PLUGIN_RUST_SRC = path.normalize(
   path.join(BABEL_PLUGIN_RUST_ROOT, 'dist', 'index.js'),
 );
+export const RUST_EXPERIMENTAL_FIXTURES_PATH = path.join(
+  BABEL_PLUGIN_RUST_ROOT,
+  'src',
+  '__tests__',
+  'fixtures',
+  'experimental',
+);
 export const CRATES_PATH = path.normalize(
   path.join(PROJECT_ROOT, '..', 'crates'),
 );

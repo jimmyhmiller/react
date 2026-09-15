@@ -30,6 +30,12 @@ import type {TransitionTypes} from 'react/src/ReactTransitionType';
 import {NotPending} from '../shared/ReactDOMFormActions';
 
 import {setSrcObject} from './ReactDOMSrcObject';
+import type {BlockValues} from './ReactDOMBlocks';
+import type {BlockTemplate} from '../shared/ReactDOMBlockTemplate';
+import {
+  createBlockInstance as createBlockInstanceImpl,
+  commitBlockUpdate as commitBlockUpdateImpl,
+} from './ReactDOMBlocks';
 
 import {getCurrentRootHostContainer} from 'react-reconciler/src/ReactFiberHostContext';
 import {runWithFiberInDEV} from 'react-reconciler/src/ReactCurrentFiber';
@@ -7024,4 +7030,72 @@ export function resetFormInstance(form: FormInstance): void {
   ReactBrowserEventEmitterSetEnabled(true);
   form.reset();
   ReactBrowserEventEmitterSetEnabled(false);
+}
+
+// -------------------
+//   Compiled blocks
+// -------------------
+
+export const supportsBlocks = true;
+
+export {
+  isBlockTemplate,
+  getBlockSlotCount,
+  getBlockSlotValue,
+  getBlockSlotPosition,
+  blockValuesChanged,
+  getBlockSlotParent,
+  getBlockSlotNextStaticSibling,
+  getBlockSlotValueKind,
+  BlockSlotInline,
+  BlockSlotList,
+  BlockSlotFiber,
+  blockListItemNeedsFiber,
+  blockSlotNeedsCommit,
+  getBlockSlotInlineNode,
+  setBlockSlotContent,
+  getBlockSlotInlineItems,
+  getBlockInlineItemSlotItems,
+  getBlockInlineItemKey,
+  getBlockInlineItemTemplate,
+  getBlockInlineItemRoot,
+  adoptBlockInlineItem,
+  getBlockValues,
+} from './ReactDOMBlocks';
+export type {BlockInlineItem} from './ReactDOMBlocks';
+
+export function createBlockInstance(
+  template: BlockTemplate,
+  values: BlockValues,
+  rootContainerInstance: Container,
+  hostContext: HostContext,
+  internalInstanceHandle: Object,
+): Instance {
+  let hostContextProd: HostContextProd;
+  if (__DEV__) {
+    hostContextProd = (hostContext as any as HostContextDev).context;
+  } else {
+    hostContextProd = hostContext as any;
+  }
+  if (hostContextProd !== HostContextNamespaceNone) {
+    throw new Error(
+      'Compiled blocks can only be rendered inside HTML content, not inside ' +
+        '<svg> or <math>.',
+    );
+  }
+  return createBlockInstanceImpl(
+    template,
+    values,
+    getOwnerDocumentFromRootContainer(rootContainerInstance),
+    internalInstanceHandle,
+  );
+}
+
+export function commitBlockUpdate(
+  instance: Instance,
+  template: BlockTemplate,
+  oldValues: BlockValues,
+  newValues: BlockValues,
+): void {
+  commitBlockUpdateImpl(instance, template, oldValues, newValues);
 }

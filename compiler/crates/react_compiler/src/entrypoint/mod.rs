@@ -1,6 +1,8 @@
+pub mod block_templates;
 pub mod compile_result;
 pub mod gating;
 pub mod imports;
+pub mod inline_candidates;
 pub mod pipeline;
 pub mod plugin_options;
 pub mod program;

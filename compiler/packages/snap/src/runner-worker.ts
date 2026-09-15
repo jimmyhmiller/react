@@ -55,6 +55,7 @@ async function compile(
   shouldLog: boolean,
   includeEvaluator: boolean,
   enableRust: boolean = false,
+  forcedRustFlags: ReadonlyArray<string> = [],
 ): Promise<{
   error: string | null;
   compileResult: TransformResult | null;
@@ -144,6 +145,8 @@ async function compile(
       EffectEnum,
       ValueKindEnum,
       ValueReasonEnum,
+      enableRust,
+      forcedRustFlags,
     );
 
     if (result.kind === 'err') {
@@ -180,6 +183,7 @@ export async function transformFixture(
   shouldLog: boolean,
   includeEvaluator: boolean,
   enableRust: boolean = false,
+  forcedRustFlags: ReadonlyArray<string> = [],
 ): Promise<TestResult> {
   const {input, snapshot: expected, snapshotPath: outputPath} = fixture;
   const basename = getBasename(fixture);
@@ -202,6 +206,7 @@ export async function transformFixture(
     shouldLog,
     includeEvaluator,
     enableRust,
+    forcedRustFlags,
   );
 
   let unexpectedError: string | null = null;

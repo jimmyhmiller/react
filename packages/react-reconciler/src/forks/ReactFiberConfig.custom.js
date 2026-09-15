@@ -284,3 +284,35 @@ export const acquireSingletonInstance = $$$config.acquireSingletonInstance;
 export const releaseSingletonInstance = $$$config.releaseSingletonInstance;
 export const isHostSingletonType = $$$config.isHostSingletonType;
 export const isSingletonScope = $$$config.isSingletonScope;
+
+// -------------------
+//   Compiled blocks
+//     (optional)
+// -------------------
+export const supportsBlocks = $$$config.supportsBlocks;
+export const isBlockTemplate = $$$config.isBlockTemplate;
+export const getBlockSlotCount = $$$config.getBlockSlotCount;
+export const getBlockSlotValue = $$$config.getBlockSlotValue;
+export const createBlockInstance = $$$config.createBlockInstance;
+export const blockValuesChanged = $$$config.blockValuesChanged;
+export const commitBlockUpdate = $$$config.commitBlockUpdate;
+export const getBlockSlotParent = $$$config.getBlockSlotParent;
+export const getBlockSlotPosition = $$$config.getBlockSlotPosition;
+export const getBlockSlotNextStaticSibling =
+  $$$config.getBlockSlotNextStaticSibling;
+export const getBlockSlotValueKind = $$$config.getBlockSlotValueKind;
+export const BlockSlotInline = $$$config.BlockSlotInline;
+export const BlockSlotList = $$$config.BlockSlotList;
+export const BlockSlotFiber = $$$config.BlockSlotFiber;
+export const blockListItemNeedsFiber = $$$config.blockListItemNeedsFiber;
+export const blockSlotNeedsCommit = $$$config.blockSlotNeedsCommit;
+export const getBlockSlotInlineNode = $$$config.getBlockSlotInlineNode;
+export const setBlockSlotContent = $$$config.setBlockSlotContent;
+export const getBlockSlotInlineItems = $$$config.getBlockSlotInlineItems;
+export const getBlockInlineItemSlotItems =
+  $$$config.getBlockInlineItemSlotItems;
+export const getBlockInlineItemKey = $$$config.getBlockInlineItemKey;
+export const getBlockInlineItemTemplate = $$$config.getBlockInlineItemTemplate;
+export const getBlockInlineItemRoot = $$$config.getBlockInlineItemRoot;
+export const adoptBlockInlineItem = $$$config.adoptBlockInlineItem;
+export const getBlockValues = $$$config.getBlockValues;

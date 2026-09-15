@@ -16,6 +16,7 @@ use react_compiler_hir::environment::Environment;
 use react_compiler_hir::environment::OutputMode;
 use react_compiler_hir::environment_config::EnvironmentConfig;
 use react_compiler_lowering::FunctionNode;
+use react_compiler_optimization::InlineComponentCandidates;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 
 use super::compile_result::CodegenFunction;
@@ -41,6 +42,9 @@ pub fn compile_fn(
     fn_type: ReactFunctionType,
     mode: CompilerOutputMode,
     env_config: &EnvironmentConfig,
+    inline_candidates: Option<&InlineComponentCandidates<'_>>,
+    inlined_sites: &mut usize,
+    memoized_lists: &mut usize,
     context: &mut ProgramContext,
 ) -> Result<CodegenFunction, CompilerError> {
     let mut env = Environment::with_config(env_config.clone());
@@ -56,6 +60,7 @@ pub fn compile_fn(
     env.instrument_gating_name = context.instrument_gating_name.clone();
     env.hook_guard_name = context.hook_guard_name.clone();
     env.seed_uid_known_names(&context.known_referenced_names());
+    env.seed_block_template_names(context.block_template_names());
 
     env.reference_node_ids = scope_info.ref_node_id_to_binding.keys().copied().collect();
 
@@ -121,6 +126,24 @@ pub fn compile_fn(
         let debug_drop_memo = debug_print::debug_hir(&hir, &env);
         context.log_debug(DebugLogEntry::new("DropManualMemoization", debug_drop_memo));
         context.timing.stop();
+    }
+
+    if let Some(candidates) = inline_candidates {
+        context.timing.start("InlineComponents");
+        *inlined_sites = react_compiler_optimization::inline_components(
+            &mut hir, &mut env, candidates, scope_info,
+        )?;
+        context.timing.stop();
+
+        if context.debug_enabled {
+            context.timing.start("debug_print:InlineComponents");
+            let debug_inline_components = debug_print::debug_hir(&hir, &env);
+            context.log_debug(DebugLogEntry::new(
+                "InlineComponents",
+                debug_inline_components,
+            ));
+            context.timing.stop();
+        }
     }
 
     context
@@ -275,6 +298,20 @@ pub fn compile_fn(
         context.timing.stop();
     }
 
+    if env.config.enable_jsx_blocks && env.output_mode == OutputMode::Client {
+        context.timing.start("CompileJsxBlocks");
+        react_compiler_optimization::compile_jsx_blocks(&mut hir, &mut env);
+        context.timing.stop();
+
+        if context.debug_enabled {
+            context.timing.start("debug_print:CompileJsxBlocks");
+            let debug_jsx_blocks = debug_print::debug_hir(&hir, &env);
+            context.log_debug(DebugLogEntry::new("CompileJsxBlocks", debug_jsx_blocks));
+            context.timing.stop();
+        }
+
+    }
+
     context.timing.start("AnalyseFunctions");
     let mut inner_logs: Vec<String> = Vec::new();
     let debug_inner = context.debug_enabled;
@@ -310,6 +347,40 @@ pub fn compile_fn(
             debug_analyse_functions,
         ));
         context.timing.stop();
+    }
+
+    // After AnalyseFunctions, whose dead code elimination removes unused
+    // captured variables from nested functions, and before the component's own
+    // effects are inferred.
+    if env.config.enable_jsx_blocks && env.output_mode == OutputMode::Client {
+        // The list item memo cache hook exists in react/compiler-runtime only.
+        if env.config.enable_list_item_memoization
+            && context.react_runtime_module == "react/compiler-runtime"
+        {
+            context.timing.start("MemoizeListItems");
+            let runtime_module = context.react_runtime_module.clone();
+            let mut hook_binding = || {
+                let import = context.add_import_specifier(
+                    &runtime_module,
+                    "unstable_useListItemMemoCache",
+                    Some("useListItemMemoCache"),
+                );
+                react_compiler_hir::NonLocalBinding::ModuleLocal { name: import.name }
+            };
+            *memoized_lists = react_compiler_optimization::memoize_list_items(
+                &mut hir,
+                &mut env,
+                &mut hook_binding,
+            );
+            context.timing.stop();
+
+            if context.debug_enabled {
+                context.timing.start("debug_print:MemoizeListItems");
+                let debug_memoize = debug_print::debug_hir(&hir, &env);
+                context.log_debug(DebugLogEntry::new("MemoizeListItems", debug_memoize));
+                context.timing.stop();
+            }
+        }
     }
 
     context.timing.start("InferMutationAliasingEffects");
@@ -1096,6 +1167,7 @@ pub fn compile_fn(
         if let Some(uid_names) = env.take_uid_known_names() {
             context.merge_uid_known_names(&uid_names);
         }
+        context.merge_block_template_names(env.block_template_names());
         return Err(env.take_errors());
     }
 
@@ -1118,6 +1190,8 @@ pub fn compile_fn(
             pruned_memo_blocks: o.func.pruned_memo_blocks,
             pruned_memo_values: o.func.pruned_memo_values,
             outlined: Vec::new(),
+            block_templates: o.func.block_templates,
+            returns_block: o.func.returns_block,
         };
         if let Some(fn_type) = o.fn_type {
             let fn_name = outlined_codegen.id.as_ref().map(|id| id.name.clone());
@@ -1150,6 +1224,7 @@ pub fn compile_fn(
     if let Some(uid_names) = env.take_uid_known_names() {
         context.merge_uid_known_names(&uid_names);
     }
+    context.merge_block_template_names(env.block_template_names());
 
     Ok(CodegenFunction {
         loc: codegen_result.loc,
@@ -1165,6 +1240,8 @@ pub fn compile_fn(
         pruned_memo_blocks: codegen_result.pruned_memo_blocks,
         pruned_memo_values: codegen_result.pruned_memo_values,
         outlined: compiled_outlined,
+        block_templates: codegen_result.block_templates,
+        returns_block: codegen_result.returns_block,
     })
 }
 
@@ -1189,6 +1266,7 @@ pub fn compile_outlined_fn(
         CompilerOutputMode::Client => OutputMode::Client,
         CompilerOutputMode::Lint => OutputMode::Lint,
     };
+    env.seed_block_template_names(context.block_template_names());
 
     // Build a FunctionDeclaration from the codegen output
     let mut outlined_decl = react_compiler_ast::statements::FunctionDeclaration {
@@ -1684,6 +1762,10 @@ fn run_pipeline_passes(
 
     react_compiler_optimization::optimize_props_method_calls(hir, env);
 
+    if env.config.enable_jsx_blocks && env.output_mode == OutputMode::Client {
+        react_compiler_optimization::compile_jsx_blocks(hir, env);
+    }
+
     react_compiler_inference::analyse_functions(hir, env, &mut |_inner_func, _inner_env| {})?;
 
     if env.has_invariant_errors() {
@@ -1798,6 +1880,7 @@ fn run_pipeline_passes(
         unique_identifiers,
         fbt_operands,
     )?;
+    context.merge_block_template_names(env.block_template_names());
 
     Ok(CodegenFunction {
         loc: codegen_result.loc,
@@ -1812,6 +1895,8 @@ fn run_pipeline_passes(
         memo_values: codegen_result.memo_values,
         pruned_memo_blocks: codegen_result.pruned_memo_blocks,
         pruned_memo_values: codegen_result.pruned_memo_values,
+        block_templates: codegen_result.block_templates,
+        returns_block: codegen_result.returns_block,
         outlined: codegen_result
             .outlined
             .into_iter()
@@ -1830,6 +1915,8 @@ fn run_pipeline_passes(
                     pruned_memo_blocks: o.func.pruned_memo_blocks,
                     pruned_memo_values: o.func.pruned_memo_values,
                     outlined: Vec::new(),
+                    block_templates: o.func.block_templates,
+            returns_block: o.func.returns_block,
                 },
                 fn_type: o.fn_type,
             })

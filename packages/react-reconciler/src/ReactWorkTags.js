@@ -39,7 +39,9 @@ export type WorkTag =
   | 28
   | 29
   | 30
-  | 31;
+  | 31
+  | 32
+  | 33;
 
 export const FunctionComponent = 0;
 export const ClassComponent = 1;
@@ -71,3 +73,9 @@ export const IncompleteFunctionComponent = 28;
 export const Throw = 29;
 export const ViewTransitionComponent = 30;
 export const ActivityComponent = 31;
+// A host element subtree created from a compiled block template. Its stateNode
+// is the root host instance; its children are HostBlockSlot fibers.
+export const HostBlock = 32;
+// A dynamic position inside a HostBlock. Its children's host nodes are
+// inserted into the block's DOM at that position.
+export const HostBlockSlot = 33;

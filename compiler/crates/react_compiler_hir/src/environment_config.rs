@@ -181,6 +181,28 @@ pub struct EnvironmentConfig {
     // 🌲
     #[serde(default)]
     pub enable_forest: bool,
+
+    /// Rust compiler only. Inline same-module, hook-free components into the
+    /// JSX sites that render them where doing so is unobservable.
+    /// See `compiler/docs/experiments/0001-component-inlining.md`.
+    #[serde(default)]
+    pub enable_component_inlining: bool,
+
+    /// Rust compiler only. Compile host JSX element trees into compiled DOM
+    /// blocks rendered by React DOM (requires a React build with
+    /// `enableCompiledBlocks`). Client output only.
+    /// See `compiler/docs/experiments/0002-compiled-blocks.md`.
+    #[serde(default)]
+    pub enable_jsx_blocks: bool,
+
+    /// Rust compiler only. With `enable_jsx_blocks`, memoize each item of a
+    /// list rendered by a `.map` callback that returns a leaf block: the
+    /// callback's body is compiled as a separate function whose memo cache
+    /// comes from `unstable_useListItemMemoCache` in react/compiler-runtime.
+    /// Requires the react/compiler-runtime module (target 19). Client output
+    /// only. See `compiler/docs/experiments/0002-compiled-blocks.md`.
+    #[serde(default)]
+    pub enable_list_item_memoization: bool,
 }
 
 impl Default for EnvironmentConfig {
@@ -224,6 +246,9 @@ impl Default for EnvironmentConfig {
             enable_allow_set_state_from_refs_in_effects: true,
             enable_verbose_no_set_state_in_effect: false,
             enable_forest: false,
+            enable_component_inlining: false,
+            enable_jsx_blocks: false,
+            enable_list_item_memoization: false,
             custom_macros: None,
         }
     }

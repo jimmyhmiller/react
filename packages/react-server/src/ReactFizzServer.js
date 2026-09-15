@@ -174,6 +174,7 @@ import {
   REACT_CONSUMER_TYPE,
   REACT_SCOPE_TYPE,
   REACT_VIEW_TRANSITION_TYPE,
+  REACT_BLOCK_TEMPLATE_TYPE,
   REACT_ACTIVITY_TYPE,
   REACT_OPTIMISTIC_KEY,
   REACT_RECOVERABLE_TYPE,
@@ -3173,6 +3174,13 @@ function renderElement(
       case REACT_LAZY_TYPE: {
         renderLazyComponent(request, task, keyPath, type, props, ref);
         return;
+      }
+      // $FlowFixMe[invalid-compare]
+      case REACT_BLOCK_TEMPLATE_TYPE: {
+        throw new Error(
+          'Compiled blocks cannot be rendered on the server yet. ' +
+            'Compile server-rendered components without enableJsxBlocks.',
+        );
       }
     }
   }

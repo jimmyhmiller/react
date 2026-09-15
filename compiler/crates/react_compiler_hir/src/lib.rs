@@ -1,3 +1,4 @@
+pub mod block_template;
 pub mod default_module_type_provider;
 pub mod dominator;
 pub mod environment;

@@ -83,6 +83,8 @@ import {
   Throw,
   ViewTransitionComponent,
   ActivityComponent,
+  HostBlock,
+  HostBlockSlot,
 } from './ReactWorkTags';
 import {
   NoFlags,
@@ -120,8 +122,10 @@ import {
   disableLegacyMode,
   enableViewTransition,
   enableFragmentRefs,
+  enableCompiledBlocks,
 } from 'shared/ReactFeatureFlags';
 import shallowEqual from 'shared/shallowEqual';
+import isArray from 'shared/isArray';
 import getComponentNameFromFiber from 'react-reconciler/src/getComponentNameFromFiber';
 import getComponentNameFromType from 'shared/getComponentNameFromType';
 import ReactStrictModeWarnings from './ReactStrictModeWarnings';
@@ -180,6 +184,18 @@ import {
   getResource,
   createHoistableInstance,
   HostTransitionContext,
+  getBlockSlotCount,
+  getBlockSlotValue,
+  getBlockSlotValueKind,
+  BlockSlotInline,
+  BlockSlotList,
+  BlockSlotFiber,
+  blockListItemNeedsFiber,
+  getBlockSlotInlineItems,
+  getBlockInlineItemSlotItems,
+  getBlockInlineItemKey,
+  getBlockInlineItemTemplate,
+  getBlockInlineItemRoot,
 } from './ReactFiberConfig';
 import type {ActivityInstance, SuspenseInstance} from './ReactFiberConfig';
 import {shouldError, shouldSuspend} from './ReactFiberReconciler';
@@ -260,6 +276,7 @@ import {
   createFiberFromTypeAndProps,
   createFiberFromFragment,
   createFiberFromOffscreen,
+  createFiberFromBlockSlot,
   createWorkInProgress,
   isSimpleFunctionComponent,
   isFunctionClassComponent,
@@ -1960,6 +1977,227 @@ function mountHostRootWithoutHydrating(
   workInProgress.flags |= ForceClientRender;
 
   reconcileChildren(current, workInProgress, nextChildren, renderLanes);
+  return workInProgress.child;
+}
+
+function updateHostBlock(current: Fiber | null, workInProgress: Fiber) {
+  if (getIsHydrating()) {
+    throw new Error('Compiled blocks do not support hydration yet.');
+  }
+  // A block's children are HostBlockSlot fibers, in template order, for the
+  // slots whose value needs fibers. A slot fiber's index is its slot index in
+  // the template. Slots holding text or nothing are rendered by the block
+  // itself. A slot holding a list of keyed blocks is rendered by the block,
+  // and has a slot fiber only for the items that need a fiber (see
+  // getBlockSlotValueKind).
+  const template = workInProgress.type;
+  const values = workInProgress.pendingProps.v;
+  if (current === null && workInProgress.stateNode === null) {
+    // A new block in a slot that switched from an inline list to fibers takes
+    // over the instance of the inline item with the same key and template, so
+    // that its DOM is kept (see updateHostBlockSlot).
+    const slot = workInProgress.return;
+    const key = workInProgress.key;
+    if (
+      slot !== null &&
+      slot.tag === HostBlockSlot &&
+      slot.memoizedState !== null &&
+      typeof key === 'string'
+    ) {
+      const adoptions: Map<string, mixed> = slot.memoizedState;
+      const item: any = adoptions.get(key);
+      if (item !== undefined && getBlockInlineItemTemplate(item) === template) {
+        adoptions.delete(key);
+        workInProgress.stateNode = getBlockInlineItemRoot(item);
+        // Read by completeWork and the commit phase.
+        workInProgress.memoizedState = item;
+      }
+    }
+  }
+  const currentValues = current !== null ? current.memoizedProps.v : null;
+  const slotCount = getBlockSlotCount(template);
+  let currentSlot = current !== null ? current.child : null;
+  let previousSlot: Fiber | null = null;
+  for (let i = 0; i < slotCount; i++) {
+    const children = getBlockSlotValue(template, values, i);
+    const matchingCurrent =
+      currentSlot !== null && currentSlot.index === i ? currentSlot : null;
+    if (matchingCurrent !== null) {
+      currentSlot = matchingCurrent.sibling;
+    }
+    const currentList: null | $ReadOnlyArray<mixed> =
+      matchingCurrent !== null ? matchingCurrent.memoizedProps.list : null;
+    let kind = getBlockSlotValueKind(children);
+    if (
+      matchingCurrent !== null &&
+      currentList === null &&
+      isArray(children) &&
+      children.length > 0
+    ) {
+      // A slot fiber that renders all of its children keeps doing so while the
+      // slot holds a list, so that the items keep their host instances.
+      kind = BlockSlotFiber;
+    }
+    if (kind === BlockSlotInline) {
+      if (matchingCurrent !== null) {
+        deleteBlockSlot(workInProgress, matchingCurrent);
+      }
+      continue;
+    }
+    // The children the slot fiber reconciles.
+    let slotChildren: mixed = children;
+    let list: null | $ReadOnlyArray<mixed> = null;
+    // Whether new block fibers may adopt inline items (see updateHostBlockSlot):
+    // the slot rendered its value inline, entirely or (for a list) partly.
+    let adopt = matchingCurrent === null || currentList !== null;
+    if (kind === BlockSlotList) {
+      const items: $ReadOnlyArray<mixed> = children as any;
+      // The items that have fibers keep them while they are in the list, so
+      // that they keep their host instances.
+      let fiberKeys: null | Map<string, mixed> = null;
+      if (currentList !== null) {
+        fiberKeys = new Map();
+        for (
+          let fiber: Fiber | null = (matchingCurrent as any).child;
+          fiber !== null;
+          fiber = fiber.sibling
+        ) {
+          if (typeof fiber.key === 'string') {
+            fiberKeys.set(fiber.key, fiber.type);
+          }
+        }
+      }
+      // An item that is the same element as in the previous list, where it
+      // had no fiber, still needs none.
+      const previousItems: mixed =
+        currentList !== null
+          ? currentList
+          : currentValues !== null
+            ? getBlockSlotValue(template, currentValues, i)
+            : null;
+      const previous: null | $ReadOnlyArray<mixed> = isArray(previousItems)
+        ? previousItems
+        : null;
+      let fiberChildren: null | Array<mixed> = null;
+      adopt = false;
+      for (let k = 0; k < items.length; k++) {
+        const item: any = items[k];
+        const hasFiber =
+          fiberKeys !== null && fiberKeys.get(item.key) === item.type;
+        if (
+          hasFiber ||
+          blockListItemNeedsFiber(
+            item,
+            previous !== null && k < previous.length ? previous[k] : null,
+          )
+        ) {
+          if (fiberChildren === null) {
+            fiberChildren = new Array<mixed>(items.length).fill(null);
+          }
+          // The item keeps its index, so that its fiber's index is its index
+          // in the list; items without fibers are holes.
+          fiberChildren[k] = item;
+          if (!hasFiber) {
+            adopt = true;
+          }
+        }
+      }
+      if (fiberChildren === null) {
+        // No item needs a fiber; the block renders the whole list.
+        if (matchingCurrent !== null) {
+          deleteBlockSlot(workInProgress, matchingCurrent);
+        }
+        continue;
+      }
+      slotChildren = fiberChildren;
+      list = items;
+    }
+    let slot: Fiber;
+    if (matchingCurrent === null) {
+      slot = createFiberFromBlockSlot(
+        {children: slotChildren, list, adopt},
+        workInProgress.mode,
+      );
+    } else {
+      const currentProps = matchingCurrent.memoizedProps;
+      slot = createWorkInProgress(
+        matchingCurrent,
+        // Reuse the props object when the children are unchanged so that the
+        // slot can bail out.
+        list === null && currentProps.children === slotChildren
+          ? currentProps
+          : {children: slotChildren, list, adopt},
+      );
+    }
+    slot.return = workInProgress;
+    slot.index = i;
+    if (previousSlot === null) {
+      workInProgress.child = slot;
+    } else {
+      previousSlot.sibling = slot;
+    }
+    previousSlot = slot;
+  }
+  if (previousSlot === null) {
+    workInProgress.child = null;
+  } else {
+    previousSlot.sibling = null;
+  }
+  return workInProgress.child;
+}
+
+function deleteBlockSlot(block: Fiber, slot: Fiber): void {
+  const deletions = block.deletions;
+  if (deletions === null) {
+    block.deletions = [slot];
+    block.flags |= ChildDeletion;
+  } else {
+    deletions.push(slot);
+  }
+}
+
+function updateHostBlockSlot(
+  current: Fiber | null,
+  workInProgress: Fiber,
+  renderLanes: Lanes,
+) {
+  const {children: nextChildren, adopt} = workInProgress.pendingProps;
+  const block: Fiber = workInProgress.return as any;
+  // A block with a host instance during its render is mounted, or adopted an
+  // inline item's instance.
+  const blockMounted = block.alternate !== null || block.stateNode !== null;
+  if (blockMounted && adopt) {
+    // New blocks for items of the inline list the slot renders adopt their
+    // instances (see updateHostBlock). An adopting block is registered on its
+    // root in the commit phase, so its inline content is read from the adopted
+    // item.
+    const items =
+      block.alternate === null && block.memoizedState !== null
+        ? getBlockInlineItemSlotItems(block.memoizedState, workInProgress.index)
+        : getBlockSlotInlineItems(block.stateNode, workInProgress.index);
+    if (items !== null && items.length > 0) {
+      const adoptions: Map<string, mixed> = new Map();
+      for (let i = 0; i < items.length; i++) {
+        const key = getBlockInlineItemKey(items[i]);
+        if (!adoptions.has(key)) {
+          adoptions.set(key, items[i]);
+        }
+      }
+      workInProgress.memoizedState = adoptions;
+    }
+  }
+  if (current === null && blockMounted) {
+    // A slot of an already mounted block started holding children that need
+    // fibers. Its children are placed individually into the mounted block.
+    workInProgress.child = reconcileChildFibers(
+      workInProgress,
+      null,
+      nextChildren,
+      renderLanes,
+    );
+  } else {
+    reconcileChildren(current, workInProgress, nextChildren, renderLanes);
+  }
   return workInProgress.child;
 }
 
@@ -4376,6 +4614,16 @@ function beginWork(
       return updateSuspenseComponent(current, workInProgress, renderLanes);
     case HostPortal:
       return updatePortalComponent(current, workInProgress, renderLanes);
+    case HostBlock:
+      if (enableCompiledBlocks) {
+        return updateHostBlock(current, workInProgress);
+      }
+      break;
+    case HostBlockSlot:
+      if (enableCompiledBlocks) {
+        return updateHostBlockSlot(current, workInProgress, renderLanes);
+      }
+      break;
     case ForwardRef: {
       return updateForwardRef(
         current,

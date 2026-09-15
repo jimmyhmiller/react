@@ -20,6 +20,7 @@ export const enablePerformanceIssueReporting: boolean = false;
 export const enableUpdaterTracking: boolean = false;
 export const enableLegacyCache: boolean = true;
 export const enableAsyncIterableChildren: boolean = false;
+export const enableCompiledBlocks: boolean = false;
 export const enableFlightWeakThenables: boolean = false;
 export const enableTaint: boolean = true;
 export const disableCommentsAsDOMContainers: boolean = true;

@@ -31,6 +31,7 @@ import prettier from 'prettier';
 import SproutTodoFilter from './SproutTodoFilter';
 import {isExpectError} from './fixture-utils';
 import {makeSharedRuntimeTypeProvider} from './sprout/shared-runtime-type-provider';
+import {parseRustOnlyEnvironmentPragma} from './rust-only-environment';
 
 export function parseLanguage(source: string): 'flow' | 'typescript' {
   return source.indexOf('@flow') !== -1 ? 'flow' : 'typescript';
@@ -52,6 +53,8 @@ function makePluginOptions(
   EffectEnum: typeof Effect,
   ValueKindEnum: typeof ValueKind,
   ValueReasonEnum: typeof ValueReason,
+  enableRust: boolean,
+  forcedRustFlags: ReadonlyArray<string>,
 ): {
   options: PluginOptions;
   loggerTestOnly: boolean;
@@ -87,6 +90,8 @@ function makePluginOptions(
     ...config,
     environment: {
       ...config.environment,
+      ...(enableRust ? parseRustOnlyEnvironmentPragma(firstLine) : {}),
+      ...Object.fromEntries(forcedRustFlags.map(flag => [flag, true])),
       moduleTypeProvider: makeSharedRuntimeTypeProvider({
         EffectEnum,
         ValueKindEnum,
@@ -226,6 +231,8 @@ export async function transformFixtureInput(
   EffectEnum: typeof Effect,
   ValueKindEnum: typeof ValueKind,
   ValueReasonEnum: typeof ValueReason,
+  enableRust: boolean,
+  forcedRustFlags: ReadonlyArray<string> = [],
 ): Promise<{kind: 'ok'; value: TransformResult} | {kind: 'err'; msg: string}> {
   // Extract the first line to quickly check for custom test directives
   const firstLine = input.substring(0, input.indexOf('\n'));
@@ -256,6 +263,8 @@ export async function transformFixtureInput(
     EffectEnum,
     ValueKindEnum,
     ValueReasonEnum,
+    enableRust,
+    forcedRustFlags,
   );
   const forgetResult = transformFromAstSync(inputAst, input, {
     filename: virtualFilepath,
@@ -281,8 +290,16 @@ export async function transformFixtureInput(
   const forgetCode = forgetResult.code;
   let evaluatorCode = null;
 
+  // Compiled blocks need a React DOM build with `enableCompiledBlocks`, which
+  // the sprout runtime does not use. Their runtime behavior is tested in
+  // packages/react-dom (ReactDOMCompiledBlocks-test) instead.
+  const usesCompiledBlocks =
+    enableRust &&
+    (parseRustOnlyEnvironmentPragma(firstLine)['enableJsxBlocks'] === true ||
+      forcedRustFlags.includes('enableJsxBlocks'));
   if (
     includeEvaluator &&
+    !usesCompiledBlocks &&
     !SproutTodoFilter.has(fixturePath) &&
     !isExpectError(filename)
   ) {

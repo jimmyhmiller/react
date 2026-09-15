@@ -16,6 +16,7 @@ import {
   HostSingleton,
   HostText,
   Fragment,
+  HostBlock,
 } from './ReactWorkTags';
 import {
   supportsSingletons,
@@ -31,6 +32,7 @@ export function commitNewChildToFragmentInstances(
   if (
     (fiber.tag !== HostComponent &&
       fiber.tag !== HostSingleton &&
+      fiber.tag !== HostBlock &&
       !(enableFragmentRefsTextNodes && fiber.tag === HostText)) ||
     // Only run fragment insertion effects for initial insertions
     fiber.alternate !== null ||
@@ -106,6 +108,7 @@ export function getParentFragmentInstances(
 function isFragmentInstanceHostBoundary(fiber: Fiber): boolean {
   return (
     fiber.tag === HostComponent ||
+    fiber.tag === HostBlock ||
     fiber.tag === HostRoot ||
     // $FlowFixMe[constant-condition]
     (supportsSingletons ? fiber.tag === HostSingleton : false)

@@ -61,6 +61,7 @@ import {
   enableFragmentRefs,
   enableDefaultTransitionIndicator,
   enableFragmentRefsTextNodes,
+  enableCompiledBlocks,
 } from 'shared/ReactFeatureFlags';
 import {
   FunctionComponent,
@@ -87,6 +88,8 @@ import {
   TracingMarkerComponent,
   ViewTransitionComponent,
   Fragment,
+  HostBlock,
+  HostBlockSlot,
 } from './ReactWorkTags';
 import {
   NoFlags,
@@ -182,6 +185,7 @@ import {
   cancelRootViewTransitionName,
   restoreRootViewTransitionName,
   isSingletonScope,
+  getBlockSlotParent,
   updateFragmentInstanceFiber,
 } from './ReactFiberConfig';
 import {
@@ -240,6 +244,8 @@ import {
   commitHostMount,
   commitHostHydratedInstance,
   commitHostUpdate,
+  commitHostBlockUpdate,
+  commitHostBlockAdoption,
   commitHostTextUpdate,
   commitHostResetTextContent,
   commitShowHideSuspenseBoundary,
@@ -544,6 +550,8 @@ function commitBeforeMutationEffectsOnFiber(
     case HostSingleton:
     case HostText:
     case HostPortal:
+    case HostBlock:
+    case HostBlockSlot:
     case IncompleteClassComponent:
       // Nothing to do for these component types
       break;
@@ -1220,7 +1228,8 @@ function hideOrUnhideAllChildrenOnFiber(fiber: Fiber, isHidden: boolean) {
   }
   switch (fiber.tag) {
     case HostComponent:
-    case HostHoistable: {
+    case HostHoistable:
+    case HostBlock: {
       // Found the nearest host component. Hide it.
       commitShowHideHostInstance(fiber, isHidden);
       // Typically, only the nearest host nodes need to be hidden, since that
@@ -1350,7 +1359,7 @@ function detachFiberAfterEffects(fiber: Fiber) {
   // tree, which has its own pointers to children, parents, and siblings.
   // The other host nodes also point back to fibers, so we should detach that
   // one, too.
-  if (fiber.tag === HostComponent) {
+  if (fiber.tag === HostComponent || fiber.tag === HostBlock) {
     const hostInstance: Instance = fiber.stateNode;
     // $FlowFixMe[invalid-compare]
     if (hostInstance !== null) {
@@ -1427,6 +1436,12 @@ function commitDeletionEffects(
         }
         case HostComponent: {
           hostParent = parent.stateNode;
+          hostParentIsContainer = false;
+          break findParent;
+        }
+        case HostBlockSlot: {
+          const block: Fiber = parent.return as any;
+          hostParent = getBlockSlotParent(block.stateNode, parent.index);
           hostParentIsContainer = false;
           break findParent;
         }
@@ -1575,12 +1590,13 @@ function commitDeletionEffectsOnFiber(
       }
       // Intentional fallthrough to next branch
     }
+    case HostBlock:
     case HostText: {
       if (
         enableFragmentRefs &&
-        enableFragmentRefsTextNodes &&
         // HostComponent falls through into this case.
-        deletedFiber.tag === HostText
+        (deletedFiber.tag === HostBlock ||
+          (enableFragmentRefsTextNodes && deletedFiber.tag === HostText))
       ) {
         commitFragmentInstanceDeletionEffects(deletedFiber);
       }
@@ -1667,6 +1683,34 @@ function commitDeletionEffectsOnFiber(
             );
           }
         }
+      }
+      break;
+    }
+    case HostBlockSlot: {
+      if (enableCompiledBlocks) {
+        // A slot's host nodes live in the slot's parent element inside the
+        // block. When an ancestor host node is being removed anyway
+        // (hostParent === null), there is nothing to remove individually.
+        const prevHostParent = hostParent;
+        const prevHostParentIsContainer = hostParentIsContainer;
+        if (hostParent !== null) {
+          const block: Fiber = deletedFiber.return as any;
+          hostParent = getBlockSlotParent(block.stateNode, deletedFiber.index);
+          hostParentIsContainer = false;
+        }
+        recursivelyTraverseDeletionEffects(
+          finishedRoot,
+          nearestMountedAncestor,
+          deletedFiber,
+        );
+        hostParent = prevHostParent;
+        hostParentIsContainer = prevHostParentIsContainer;
+      } else {
+        recursivelyTraverseDeletionEffects(
+          finishedRoot,
+          nearestMountedAncestor,
+          deletedFiber,
+        );
       }
       break;
     }
@@ -2339,6 +2383,38 @@ function commitMutationEffectsOnFiber(
             finishedWork.alternate.stateNode = finishedWork.stateNode;
           }
         }
+      }
+      break;
+    }
+    case HostBlock: {
+      if (enableCompiledBlocks) {
+        // A new block that adopted an inline list item's instance takes it
+        // over before its slot fibers place content into it. Its values are
+        // applied over the item's afterwards, like an update.
+        const adoptedValues =
+          current === null && flags & Update
+            ? commitHostBlockAdoption(finishedWork)
+            : null;
+        // We've hit a host node, so it's no longer a direct parent.
+        const prevOffscreenDirectParentIsHidden = offscreenDirectParentIsHidden;
+        offscreenDirectParentIsHidden = false;
+        recursivelyTraverseMutationEffects(root, finishedWork, lanes);
+        offscreenDirectParentIsHidden = prevOffscreenDirectParentIsHidden;
+        commitReconciliationEffects(finishedWork, lanes);
+        if (flags & Update) {
+          commitHostBlockUpdate(
+            finishedWork,
+            finishedWork.memoizedProps,
+            current !== null ? current.memoizedProps.v : adoptedValues,
+          );
+        }
+      }
+      break;
+    }
+    case HostBlockSlot: {
+      if (enableCompiledBlocks) {
+        recursivelyTraverseMutationEffects(root, finishedWork, lanes);
+        commitReconciliationEffects(finishedWork, lanes);
       }
       break;
     }
@@ -3175,6 +3251,16 @@ function disappearLayoutEffects(
       );
       break;
     }
+    case HostBlock: {
+      if (enableFragmentRefs) {
+        commitFragmentInstanceDeletionEffects(finishedWork);
+      }
+      recursivelyTraverseDisappearLayoutEffects(
+        finishedWork,
+        layoutEffectTraversalFlags,
+      );
+      break;
+    }
     case HostText: {
       if (enableFragmentRefs && enableFragmentRefsTextNodes) {
         commitFragmentInstanceDeletionEffects(finishedWork);
@@ -3402,6 +3488,17 @@ function reappearLayoutEffects(
 
       // TODO: Check flags & Ref
       safelyAttachRef(finishedWork, finishedWork.return);
+      break;
+    }
+    case HostBlock: {
+      if (enableFragmentRefs) {
+        commitFragmentInstanceInsertionEffects(finishedWork);
+      }
+      recursivelyTraverseReappearLayoutEffects(
+        finishedRoot,
+        finishedWork,
+        layoutEffectTraversalFlags,
+      );
       break;
     }
     case HostText: {

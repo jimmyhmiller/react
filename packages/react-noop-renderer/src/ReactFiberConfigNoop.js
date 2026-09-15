@@ -12,6 +12,7 @@ export * from './ReactFiberConfigNoopScopes';
 export * from './ReactFiberConfigNoopTestSelectors';
 export * from './ReactFiberConfigNoopResources';
 export * from './ReactFiberConfigNoopSingletons';
+export * from 'react-reconciler/src/ReactFiberConfigWithNoBlocks';
 // createReactNoop will overwrite these with the mutation or persistence versions.
 export * from './ReactFiberConfigNoopNoMutation';
 export * from './ReactFiberConfigNoopNoPersistence';

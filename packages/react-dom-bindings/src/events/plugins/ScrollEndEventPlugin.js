@@ -60,7 +60,7 @@ function manualDispatchScrollEndEvent(
   target: EventTarget,
 ) {
   const dispatchQueue: DispatchQueue = [];
-  const listeners = accumulateTwoPhaseListeners(inst, 'onScrollEnd');
+  const listeners = accumulateTwoPhaseListeners(inst, 'onScrollEnd', target);
   if (listeners.length > 0) {
     const event: ReactSyntheticEvent = new SyntheticUIEvent(
       'onScrollEnd',

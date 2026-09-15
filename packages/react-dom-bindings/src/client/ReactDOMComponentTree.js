@@ -13,6 +13,7 @@ import type {
   ReactDOMEventHandle,
   ReactDOMEventHandleListener,
 } from './ReactDOMEventHandleTypes';
+import type {BlockInstanceData} from './ReactDOMBlocks';
 import type {
   Container,
   TextInstance,
@@ -32,9 +33,11 @@ import {
   HostRoot,
   SuspenseComponent,
   ActivityComponent,
+  HostBlock,
 } from 'react-reconciler/src/ReactWorkTags';
 
 import {getParentHydrationBoundary} from './ReactFiberConfigDOM';
+import {TEXT_NODE} from './HTMLNodeType';
 
 import {enableScopeAPI} from 'shared/ReactFeatureFlags';
 
@@ -48,6 +51,8 @@ const internalEventHandlersKey = '__reactEvents$' + randomKey;
 const internalEventHandlerListenersKey = '__reactListeners$' + randomKey;
 const internalEventHandlesSetKey = '__reactHandles$' + randomKey;
 const internalRootNodeResourcesKey = '__reactResources$' + randomKey;
+const internalBlockInstanceKey = '__reactBlock$' + randomKey;
+const internalBlockListenersKey = '__reactBlockListeners$' + randomKey;
 const internalHoistableMarker = '__reactMarker$' + randomKey;
 const internalScrollTimer = '__reactScroll$' + randomKey;
 const internalLoadPendingKey = '__reactLoad$' + randomKey;
@@ -75,6 +80,7 @@ export function detachDeletedInstance(node: Instance): void {
   if (enableInternalInstanceMap) {
     internalInstanceMap.delete(node);
     internalPropsMap.delete(node);
+    delete (node as any)[internalBlockInstanceKey];
     delete (node as any)[internalEventHandlerListenersKey];
     delete (node as any)[internalEventHandlesSetKey];
     delete (node as any)[internalRootNodeResourcesKey];
@@ -87,6 +93,7 @@ export function detachDeletedInstance(node: Instance): void {
   // these fields are relevant.
   delete (node as any)[internalInstanceKey];
   delete (node as any)[internalPropsKey];
+  delete (node as any)[internalBlockInstanceKey];
   delete (node as any)[internalEventHandlerListenersKey];
   delete (node as any)[internalEventHandlesSetKey];
 }
@@ -246,7 +253,8 @@ export function getInstanceFromNode(node: Node): Fiber | null {
       tag === ActivityComponent ||
       tag === HostHoistable ||
       tag === HostSingleton ||
-      tag === HostRoot
+      tag === HostRoot ||
+      tag === HostBlock
     ) {
       return inst;
     } else {
@@ -266,7 +274,9 @@ export function getNodeFromInstance(inst: Fiber): Instance | TextInstance {
     tag === HostComponent ||
     tag === HostHoistable ||
     tag === HostSingleton ||
-    tag === HostText
+    tag === HostText ||
+    // The root element of a compiled block.
+    tag === HostBlock
   ) {
     // In Fiber this, is just the state node right now. We assume it will be
     // a host component or host text.
@@ -276,6 +286,54 @@ export function getNodeFromInstance(inst: Fiber): Instance | TextInstance {
   // Without this first invariant, passing a non-DOM-component triggers the next
   // invariant for a missing parent, which is super confusing.
   throw new Error('getNodeFromInstance: Invalid argument.');
+}
+
+export function setBlockInstanceData(
+  root: Instance,
+  data: BlockInstanceData,
+): void {
+  (root as any)[internalBlockInstanceKey] = data;
+}
+
+export function getBlockInstanceData(root: Instance): BlockInstanceData {
+  const data = (root as any)[internalBlockInstanceKey];
+  if (data === undefined) {
+    throw new Error(
+      'Expected a compiled block root. This error is likely caused by a bug ' +
+        'in React. Please file an issue.',
+    );
+  }
+  return data;
+}
+
+// Nodes inside a compiled block that carry event listeners point to the data
+// of the block instance they belong to. Nodes inside a block have no fiber of
+// their own, so the event system reads their listeners from the instance's
+// committed values (see getBlockEventListener).
+export function setBlockEventNodeData(
+  node: Instance,
+  data: BlockInstanceData,
+): void {
+  (node as any)[internalBlockListenersKey] = data;
+}
+
+export function getBlockEventNodeData(node: Node): null | BlockInstanceData {
+  const data = (node as any)[internalBlockListenersKey];
+  return data === undefined ? null : data;
+}
+
+// The DOM node that plays the role of `getNodeFromInstance(inst)` for an event
+// whose closest instance is `inst`. For a compiled block, the event target is a
+// node inside the block (which has no fiber of its own).
+export function getEventNodeFromInstance(
+  inst: Fiber,
+  nativeEventTarget: null | EventTarget,
+): Instance | TextInstance {
+  if (inst.tag === HostBlock && nativeEventTarget != null) {
+    const node: Node = nativeEventTarget as any;
+    return (node.nodeType === TEXT_NODE ? node.parentNode : node) as any;
+  }
+  return getNodeFromInstance(inst);
 }
 
 export function getFiberCurrentPropsFromNode(
