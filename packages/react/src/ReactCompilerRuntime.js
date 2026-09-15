@@ -114,25 +114,24 @@ export function unstable_useContextPaths<T>(
   return useContextWithSelector(Context, pathsChanged as any, paths);
 }
 
-// Custom hooks that the compiler verified to return the value of the one
-// context they read (or throw), for every value of the context.
-const contextHooks: WeakSet<Function> = new WeakSet();
+// Registered hooks whose returned value can be selected, by kind:
+// - 1: custom hooks that the compiler verified to return the value of the one
+//   context they read (or throw), for every value of the context.
+// - 2: hooks of external store libraries that return the snapshot of the one
+//   useSyncExternalStore they call, for every snapshot (like the hooks
+//   returned by Zustand's `create`, or React Redux's `useSelector`),
+//   registered by compiled modules that define or import them.
+const selectedHooks: WeakMap<Function, 1 | 2> = new WeakMap();
 
 export function unstable_registerContextHook(hook: Function): void {
   if (enableContextSelectors) {
-    contextHooks.add(hook);
+    selectedHooks.set(hook, 1);
   }
 }
 
-// Hooks of external store libraries that return the snapshot of the one
-// useSyncExternalStore they call, for every snapshot (like the hooks returned
-// by Zustand's `create`, or React Redux's `useSelector`), registered by
-// compiled modules that define or import them.
-const storeHooks: WeakSet<Function> = new WeakSet();
-
 export function unstable_registerStoreHook(hook: Function): void {
   if (enableContextSelectors) {
-    storeHooks.add(hook);
+    selectedHooks.set(hook, 2);
   }
 }
 
@@ -152,15 +151,12 @@ export function unstable_startSelectedHook(hook: Function): 0 | 1 | 2 {
       'Context selectors are not enabled in this build of React.',
     );
   }
-  if (contextHooks.has(hook)) {
-    startSelectedHook(1);
-    return 1;
+  const kind = selectedHooks.get(hook);
+  if (kind === undefined) {
+    return 0;
   }
-  if (storeHooks.has(hook)) {
-    startSelectedHook(2);
-    return 2;
-  }
-  return 0;
+  startSelectedHook(kind);
+  return kind;
 }
 
 export function unstable_selectHookPaths<T>(

@@ -23,6 +23,8 @@ import {APPS} from './apps.mjs';
 import {VARIANTS, variantHasApp} from './variants.mjs';
 
 const require = createRequire(import.meta.url);
+// BENCH_NO_MINIFY=1 keeps function names in the bundles, for profiling.
+const MINIFY = process.env.BENCH_NO_MINIFY !== '1';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const COMPILER_ROOT = path.resolve(ROOT, '..', '..');
 const REPO_ROOT = path.resolve(COMPILER_ROOT, '..');
@@ -284,7 +286,7 @@ async function buildReactVariant(variant, app, outDir) {
     await esbuild.build({
       entryPoints: [path.join(ROOT, 'src', app.entry)],
       bundle: true,
-      minify: true,
+      minify: MINIFY,
       format: 'iife',
       jsx: 'automatic',
       define: {'process.env.NODE_ENV': '"production"', ...options.define},
@@ -306,7 +308,7 @@ async function buildFrameworkVariant(variant, app, outDir) {
   await esbuild.build({
     entryPoints: [path.join(ROOT, 'src', app.frameworkEntries[variant.framework])],
     bundle: true,
-    minify: true,
+    minify: MINIFY,
     format: 'iife',
     // Solid's JSX is compiled by its plugin; no other JSX is bundled.
     jsx: 'preserve',
