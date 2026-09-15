@@ -53,6 +53,7 @@ describe('selected store hooks', () => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
+      listenerCount: () => listeners.size,
     };
     function useStore(selector) {
       const slice = React.useSyncExternalStore(
@@ -444,6 +445,198 @@ describe('selected store hooks', () => {
         store.api.setState(s => ({value: {...s.value, b: s.value.b + 1}})),
       );
       assertLog(['render 1']);
+    });
+  });
+  describe('shared subscriptions', () => {
+    function Card({store, id}) {
+      const selectedId = useSelected(
+        store.useStore,
+        [[1, id]],
+        selectSelectedId,
+      );
+      Scheduler.log(`render ${id} ${selectedId === id}`);
+      return selectedId === id ? `[${id}]` : id;
+    }
+
+    // @gate enableContextSelectors
+    it('subscribes once per store for the components of registered store hooks', async () => {
+      const store = createStore({selectedId: null});
+      registerStoreHook(store.useStore);
+      const other = createStore({x: 0});
+      function Plain() {
+        const x = React.useSyncExternalStore(
+          other.api.subscribe,
+          () => other.api.getState().x,
+        );
+        return x;
+      }
+      const root = ReactNoop.createRoot();
+      await act(() =>
+        root.render(
+          <>
+            <Card store={store} id="a" />
+            <Card store={store} id="b" />
+            <Card store={store} id="c" />
+            <Plain />
+            <Plain />
+          </>,
+        ),
+      );
+      Scheduler.unstable_clearLog();
+      expect(store.api.listenerCount()).toBe(1);
+      // Other subscriptions are unchanged.
+      expect(other.api.listenerCount()).toBe(2);
+
+      await act(() => store.api.setState({selectedId: 'b'}));
+      assertLog(['render b true']);
+      expect(root).toMatchRenderedOutput('a[b]c00');
+
+      await act(() =>
+        root.render(
+          <>
+            <Card store={store} id="a" />
+            <Card store={store} id="b" />
+          </>,
+        ),
+      );
+      Scheduler.unstable_clearLog();
+      expect(store.api.listenerCount()).toBe(1);
+      await act(() => store.api.setState({selectedId: 'a'}));
+      assertLog(['render a true', 'render b false']);
+
+      await act(() => root.render(null));
+      expect(store.api.listenerCount()).toBe(0);
+      expect(other.api.listenerCount()).toBe(0);
+
+      await act(() => root.render(<Card store={store} id="a" />));
+      assertLog(['render a true']);
+      expect(store.api.listenerCount()).toBe(1);
+      await act(() => store.api.setState({selectedId: null}));
+      assertLog(['render a false']);
+    });
+
+    // @gate enableContextSelectors
+    it('shares the subscribe function of a store hook with unselected reads', async () => {
+      const store = createStore({selectedId: null, count: 0});
+      registerStoreHook(store.useStore);
+      const selectCount = state => state.count;
+      function Count() {
+        // Not selected: the value is rendered whole.
+        const count = store.useStore(selectCount);
+        Scheduler.log('count ' + count);
+        return count;
+      }
+      const root = ReactNoop.createRoot();
+      await act(() =>
+        root.render(
+          <>
+            <Card store={store} id="a" />
+            <Count />
+            <Count />
+          </>,
+        ),
+      );
+      assertLog(['render a false', 'count 0', 'count 0']);
+      expect(store.api.listenerCount()).toBe(1);
+      await act(() => store.api.setState(s => ({count: s.count + 1})));
+      assertLog(['count 1', 'count 1']);
+      expect(root).toMatchRenderedOutput('a11');
+      await act(() => root.render(<Count />));
+      assertLog(['count 1']);
+      expect(store.api.listenerCount()).toBe(1);
+      await act(() => store.api.setState(s => ({count: s.count + 1})));
+      assertLog(['count 2']);
+      await act(() => root.render(null));
+      expect(store.api.listenerCount()).toBe(0);
+    });
+
+    // @gate enableContextSelectors
+    it('shares subscriptions across roots', async () => {
+      const store = createStore({selectedId: null});
+      registerStoreHook(store.useStore);
+      const first = ReactNoop.createRoot();
+      const second = ReactNoop.createRoot();
+      await act(() => first.render(<Card store={store} id="a" />));
+      assertLog(['render a false']);
+      await act(() => second.render(<Card store={store} id="b" />));
+      assertLog(['render b false']);
+      expect(store.api.listenerCount()).toBe(1);
+      await act(() => store.api.setState({selectedId: 'b'}));
+      assertLog(['render b true']);
+      await act(() => first.render(null));
+      expect(store.api.listenerCount()).toBe(1);
+      await act(() => store.api.setState({selectedId: null}));
+      assertLog(['render b false']);
+      await act(() => second.render(null));
+      expect(store.api.listenerCount()).toBe(0);
+    });
+
+    // @gate enableContextSelectors
+    it('handles components unsubscribing while the store notifies', async () => {
+      const store = createStore({selectedId: null, hidden: false});
+      registerStoreHook(store.useStore);
+      const root = ReactNoop.createRoot();
+      // A selector that synchronously unmounts components when the store
+      // changes, which render purity does not allow, but must not corrupt the
+      // subscriptions of the other components.
+      const selectAndUnmount = state => {
+        if (state.hidden && !unmounted) {
+          unmounted = true;
+          ReactNoop.flushSync(() => root.render(<Card store={store} id="c" />));
+        }
+        return state.selectedId;
+      };
+      let unmounted = false;
+      function Unmounting({id}) {
+        const selectedId = useSelected(
+          store.useStore,
+          [[1, id]],
+          selectAndUnmount,
+        );
+        return selectedId === id ? `[${id}]` : id;
+      }
+      await act(() =>
+        root.render(
+          <>
+            <Unmounting id="a" />
+            <Unmounting id="b" />
+            <Card store={store} id="c" />
+          </>,
+        ),
+      );
+      Scheduler.unstable_clearLog();
+      expect(store.api.listenerCount()).toBe(1);
+      await act(() => store.api.setState({hidden: true}));
+      Scheduler.unstable_clearLog();
+      expect(root).toMatchRenderedOutput('c');
+      expect(store.api.listenerCount()).toBe(1);
+      await act(() => store.api.setState({selectedId: 'c'}));
+      assertLog(['render c true']);
+      expect(root).toMatchRenderedOutput('[c]');
+      await act(() => root.render(null));
+      expect(store.api.listenerCount()).toBe(0);
+    });
+
+    // @gate enableContextSelectors
+    it('subscribes again in StrictMode', async () => {
+      const store = createStore({selectedId: null});
+      registerStoreHook(store.useStore);
+      const root = ReactNoop.createRoot();
+      await act(() =>
+        root.render(
+          <React.StrictMode>
+            <Card store={store} id="a" />
+            <Card store={store} id="b" />
+          </React.StrictMode>,
+        ),
+      );
+      Scheduler.unstable_clearLog();
+      expect(store.api.listenerCount()).toBe(1);
+      await act(() => store.api.setState({selectedId: 'a'}));
+      assertLog(['render a true']);
+      expect(root).toMatchRenderedOutput('[a]b');
+      await act(() => root.render(null));
+      expect(store.api.listenerCount()).toBe(0);
     });
   });
 });

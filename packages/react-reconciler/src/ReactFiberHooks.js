@@ -956,6 +956,7 @@ export function resetHooksAfterThrow(): void {
   selectedHookDependency = null;
   selectedStoreInstance = null;
   selectedStoreSnapshot = null;
+  selectedStoreSubscribe = null;
 
   // We can assume the previous dispatcher is always this one, since we set it
   // at the beginning of the render phase and there's no re-entrance.
@@ -1741,7 +1742,7 @@ function mountSyncExternalStore<T>(
   };
   hook.queue = inst;
   if (enableContextSelectors && selectedHookFiber === fiber) {
-    recordSelectedStore(inst, nextSnapshot, true);
+    recordSelectedStore(inst, nextSnapshot, subscribe, true);
   }
 
   // Schedule an effect to subscribe to the store.
@@ -1806,7 +1807,7 @@ function updateSyncExternalStore<T>(
   }
   const inst = hook.queue;
   if (enableContextSelectors && selectedHookFiber === fiber) {
-    recordSelectedStore(inst, nextSnapshot, false);
+    recordSelectedStore(inst, nextSnapshot, subscribe, false);
   }
 
   updateEffect(subscribeToStore.bind(null, fiber, inst, subscribe), [
@@ -1916,6 +1917,13 @@ function subscribeToStore<T>(
   inst: StoreInstance<T>,
   subscribe: (() => void) => () => void,
 ): any {
+  if (
+    enableContextSelectors &&
+    (fiber.mode & ConcurrentMode) !== NoMode &&
+    sharedStoreSubscribes.has(subscribe)
+  ) {
+    return subscribeToSharedStore(fiber, inst, subscribe);
+  }
   const handleStoreChange = () => {
     // The store changed. Check if the snapshot changed since the last time we
     // read from the store.
@@ -1931,6 +1939,158 @@ function subscribeToStore<T>(
   };
   // Subscribe to the store and return a clean-up function.
   return subscribe(handleStoreChange);
+}
+
+// Shared store subscriptions (enableContextSelectors).
+//
+// Store libraries subscribe once per useSyncExternalStore call, so a store
+// change calls a listener for every such call in the app, most of which find
+// that their snapshot did not change. A store's subscribe function is shared
+// once a registered store hook passed it to useSyncExternalStore (see
+// selectHookResult): such a function only adds a listener that the store calls
+// after it changes, and returns a function removing it. Since that is a
+// property of the function, every useSyncExternalStore passed the function
+// then shares one listener per function, which checks each subscribed store
+// instance, whether its call was selected or not. What is observable by the
+// store is how many listeners it has and when React's listener runs relative
+// to other listeners; React's listener only reads snapshots (which must be
+// pure) and schedules renders. Legacy roots can render synchronously when an
+// update is scheduled, so they keep their own subscriptions.
+type SharedStoreSubscriber = {
+  fiber: Fiber | null,
+  inst: StoreInstance<any>,
+  index: number,
+};
+
+type SharedStoreSubscription = {
+  subscribe: (() => void) => () => void,
+  unsubscribe: null | (() => void),
+  subscribers: Array<SharedStoreSubscriber>,
+  // Subscribers removed while the subscription was notifying.
+  removed: number,
+  notifying: boolean,
+};
+
+const sharedStoreSubscribes: WeakSet<(() => void) => () => void> =
+  new WeakSet();
+
+const sharedStoreSubscriptions: Map<
+  (() => void) => () => void,
+  SharedStoreSubscription,
+> = new Map();
+
+function subscribeToSharedStore<T>(
+  fiber: Fiber,
+  inst: StoreInstance<T>,
+  subscribe: (() => void) => () => void,
+): () => void {
+  let subscription = sharedStoreSubscriptions.get(subscribe);
+  if (subscription === undefined) {
+    const created: SharedStoreSubscription = {
+      subscribe,
+      unsubscribe: null,
+      subscribers: [],
+      removed: 0,
+      notifying: false,
+    };
+    // Registered only once subscribing succeeded.
+    created.unsubscribe = subscribe(() => notifySharedStore(created));
+    subscription = created;
+    sharedStoreSubscriptions.set(subscribe, created);
+  }
+  const subscribers = subscription.subscribers;
+  const subscriber: SharedStoreSubscriber = {
+    fiber,
+    inst,
+    index: subscribers.length,
+  };
+  subscribers.push(subscriber);
+  const shared = subscription;
+  return () => unsubscribeFromSharedStore(shared, subscriber);
+}
+
+function notifySharedStore(subscription: SharedStoreSubscription): void {
+  const subscribers = subscription.subscribers;
+  // Subscribers added by a subscriber's check are not notified of this
+  // change; their render reads the new snapshot.
+  const length = subscribers.length;
+  const wasNotifying = subscription.notifying;
+  subscription.notifying = true;
+  try {
+    for (let i = 0; i < length; i++) {
+      const subscriber = subscribers[i];
+      const fiber = subscriber.fiber;
+      if (fiber === null) {
+        continue;
+      }
+      const inst = subscriber.inst;
+      if (
+        inst.changed !== null
+          ? checkIfSelectedSnapshotChanged(inst)
+          : checkIfSnapshotChanged(inst)
+      ) {
+        startUpdateTimerByLane(SyncLane, 'updateSyncExternalStore()', fiber);
+        forceStoreRerender(fiber);
+      }
+    }
+  } finally {
+    subscription.notifying = wasNotifying;
+    if (!wasNotifying && subscription.removed > 0) {
+      compactSharedStore(subscription);
+    }
+  }
+}
+
+function unsubscribeFromSharedStore(
+  subscription: SharedStoreSubscription,
+  subscriber: SharedStoreSubscriber,
+): void {
+  if (subscriber.fiber === null) {
+    return;
+  }
+  subscriber.fiber = null;
+  const subscribers = subscription.subscribers;
+  if (subscription.notifying) {
+    subscription.removed++;
+    return;
+  }
+  // Swap with the last subscriber.
+  const last = subscribers.pop();
+  if (last !== subscriber) {
+    subscribers[subscriber.index] = last;
+    last.index = subscriber.index;
+  }
+  if (subscribers.length === 0) {
+    closeSharedStore(subscription);
+  }
+}
+
+function compactSharedStore(subscription: SharedStoreSubscription): void {
+  const subscribers = subscription.subscribers;
+  let length = 0;
+  for (let i = 0; i < subscribers.length; i++) {
+    const subscriber = subscribers[i];
+    if (subscriber.fiber !== null) {
+      subscriber.index = length;
+      subscribers[length++] = subscriber;
+    }
+  }
+  subscribers.length = length;
+  subscription.removed = 0;
+  if (length === 0) {
+    closeSharedStore(subscription);
+  }
+}
+
+function closeSharedStore(subscription: SharedStoreSubscription): void {
+  if (sharedStoreSubscriptions.get(subscription.subscribe) === subscription) {
+    sharedStoreSubscriptions.delete(subscription.subscribe);
+  }
+  const unsubscribe = subscription.unsubscribe;
+  subscription.unsubscribe = null;
+  if (typeof unsubscribe === 'function') {
+    unsubscribe();
+  }
 }
 
 function checkIfSnapshotChanged<T>(inst: StoreInstance<T>): boolean {
@@ -3972,6 +4132,7 @@ let selectedHookDependency: ContextDependency<mixed> | null = null;
 let selectedStoreCount: number = 0;
 let selectedStoreInstance: StoreInstance<any> | null = null;
 let selectedStoreSnapshot: mixed = null;
+let selectedStoreSubscribe: null | ((() => void) => () => void) = null;
 let selectedStoreMounted: boolean = false;
 
 function startSelectedHook(kind: 1 | 2): void {
@@ -3982,16 +4143,19 @@ function startSelectedHook(kind: 1 | 2): void {
   selectedStoreCount = 0;
   selectedStoreInstance = null;
   selectedStoreSnapshot = null;
+  selectedStoreSubscribe = null;
 }
 
 function recordSelectedStore<T>(
   inst: StoreInstance<T>,
   snapshot: T,
+  subscribe: (() => void) => () => void,
   mounted: boolean,
 ): void {
   selectedStoreCount++;
   selectedStoreInstance = inst;
   selectedStoreSnapshot = snapshot;
+  selectedStoreSubscribe = subscribe;
   selectedStoreMounted = mounted;
 }
 
@@ -4020,6 +4184,7 @@ function selectHookResult<T>(
   const storeCount = selectedStoreCount;
   const inst = selectedStoreInstance;
   const snapshot = selectedStoreSnapshot;
+  const subscribe = selectedStoreSubscribe;
   selectedHookKind = 0;
   selectedHookFiber = null;
   selectedHookHook = null;
@@ -4027,6 +4192,7 @@ function selectHookResult<T>(
   selectedStoreCount = 0;
   selectedStoreInstance = null;
   selectedStoreSnapshot = null;
+  selectedStoreSubscribe = null;
   if (fiber !== currentlyRenderingFiber) {
     return value;
   }
@@ -4050,6 +4216,9 @@ function selectHookResult<T>(
     // earlier render is reset. (A hook calls the same hooks in every render,
     // so a call that read another number of stores never selected one.)
     const selected = is(snapshot, value);
+    if (selected && subscribe !== null) {
+      sharedStoreSubscribes.add(subscribe);
+    }
     const nextChanged = selected ? changed : null;
     const nextArgument = selected ? argument : null;
     if (selectedStoreMounted) {

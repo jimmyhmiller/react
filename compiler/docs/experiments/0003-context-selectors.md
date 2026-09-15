@@ -158,6 +158,29 @@ instance is shared by renders that may not commit. The checks for store
 changes between render and commit and during concurrent renders still compare
 snapshots, which at worst renders the component again.
 
+### Shared store subscriptions
+
+Store libraries subscribe once per `useSyncExternalStore` call. A board with
+1,000 cards reading 8 store values each has ~8,000 listeners, and every store
+change (a notification counter) calls all of them, although one component
+renders. Once a registered store hook's call passes the verification above,
+its `subscribe` function is known to only add a listener that the store calls
+after changes (returning a remover), so React subscribes once per such
+function and checks every subscribed store instance from that one listener,
+for every `useSyncExternalStore` passed the function, selected or not.
+
+Observable to the store: how many listeners it has, and when React's listener
+runs relative to its other listeners. React's listener only reads snapshots
+(which must be pure) and schedules renders. Legacy roots can render
+synchronously when an update is scheduled, so they keep one subscription per
+call. Subscribers removed while the shared listener runs (only possible if a
+snapshot read renders synchronously) are removed after it.
+
+Zustand board: 50 notifications 16.4 → 15.2 ms, 50 presence updates 17.4 →
+15.7 ms. The store has one listener instead of ~7,000; what remains is running
+each component's selector. The React Redux app selects no reads, so its
+subscriptions are unchanged.
+
 ### Fallback
 
 If an attempt that selected context reads fails to compile, the entrypoint
