@@ -205,6 +205,12 @@ pub struct EnvironmentConfig {
     #[serde(default)]
     pub enable_list_item_memoization: bool,
 
+    /// Rust compiler only, with `enable_list_item_memoization`. Route safe
+    /// one-parameter rendered list callbacks through the list memo cache so
+    /// unchanged prefixes are reused when an immutable array grows or changes.
+    #[serde(default)]
+    pub enable_incremental_list_mapping: bool,
+
     /// Rust compiler only. Describe the values of each context a component
     /// reads, so that React only renders it for a change of those values
     /// (requires a React build with `enableContextSelectors` and the
@@ -275,6 +281,7 @@ impl Default for EnvironmentConfig {
             enable_component_inlining: false,
             enable_jsx_blocks: false,
             enable_list_item_memoization: false,
+            enable_incremental_list_mapping: false,
             enable_context_selectors: false,
             enable_update_slicing: false,
             enable_static_islands: false,

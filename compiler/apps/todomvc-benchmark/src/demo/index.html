@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+          content="Toggle React Compiler optimizations and compare the same 2,000-row workload across every meaningful combination."
+    />
+    <title>Add 2,000 · React optimization comparison</title>
+    <link rel="stylesheet" href="demo.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">React performance lab</p>
+          <h1>Add 2,000</h1>
+        </div>
+        <p class="summary">
+          One tiny component, every meaningful optimization combination. Add
+          2,000 rows one at a time and see exactly where the time goes.
+        </p>
+      </header>
+
+      <section class="controls" aria-label="Benchmark controls">
+        <div class="configuration">
+          <div class="compiler-mode" role="radiogroup" aria-label="Compiler mode">
+            <button type="button" class="mode-button" data-compiler="false" role="radio">Compiler off</button>
+            <button type="button" class="mode-button" data-compiler="true" role="radio">Compiler on</button>
+          </div>
+          <div class="feature-toggles" aria-label="Experimental optimizations"></div>
+        </div>
+        <div class="actions">
+          <button class="secondary-button" id="reset-button" type="button">Reset</button>
+          <button class="run-button" id="run-button" type="button">
+            <span>Run 2,000 adds</span>
+            <span class="run-arrow" aria-hidden="true">→</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="Performance results">
+        <article class="metric primary-metric">
+          <span class="metric-label">Reference median</span>
+          <strong id="reference-time">—</strong>
+          <span id="reference-range" class="metric-note">10 measured runs</span>
+        </article>
+        <article class="metric">
+          <span class="metric-label">This run</span>
+          <strong id="live-time">Not run</strong>
+          <span id="run-status" class="metric-note" aria-live="polite">Ready</span>
+        </article>
+        <article class="metric">
+          <span class="metric-label">Rows committed</span>
+          <strong id="row-count">0 / 2,000</strong>
+          <span class="metric-note">One input event per row</span>
+        </article>
+        <article class="metric">
+          <span class="metric-label">Relative speed</span>
+          <strong id="speedup">1.00×</strong>
+          <span class="metric-note">vs React without compiler</span>
+        </article>
+      </section>
+
+      <section class="matrix-panel" aria-labelledby="matrix-title">
+        <header class="matrix-header">
+          <div>
+            <p class="panel-kicker">All combinations</p>
+            <h2 id="matrix-title">Optimization matrix</h2>
+          </div>
+          <p>Click a measured build to load it. Incremental mapping depends on list memoization, so there are 12 valid compiler combinations.</p>
+        </header>
+        <div class="matrix-wrap">
+          <table class="matrix-table">
+            <thead><tr><th>Build</th><th>Inline</th><th>Blocks</th><th>List cache</th><th>Incremental</th><th>Median</th><th>Speedup</th></tr></thead>
+            <tbody id="matrix-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <article class="code-panel">
+          <header class="panel-header">
+            <div>
+              <p class="panel-kicker">What ships</p>
+              <h2 id="code-title">Source</h2>
+            </div>
+            <div class="code-tabs" role="tablist" aria-label="Code view">
+              <button class="code-tab active" role="tab" aria-selected="true" data-code="source">Source</button>
+              <button class="code-tab" role="tab" aria-selected="false" data-code="generated">Generated</button>
+            </div>
+          </header>
+          <div class="code-meta">
+            <span id="code-filename">AddRowsApp.jsx</span>
+            <button id="copy-button" class="copy-button" type="button">Copy</button>
+          </div>
+          <pre class="source-view" tabindex="0"><code id="source-code"></code></pre>
+        </article>
+
+        <article class="preview-panel">
+          <header class="panel-header preview-header">
+            <div>
+              <p class="panel-kicker">Live output</p>
+              <h2 id="preview-title">React</h2>
+            </div>
+            <span class="status-pill"><span></span> production bundle</span>
+          </header>
+          <p id="variant-description" class="variant-description"></p>
+          <div class="frame-wrap">
+            <div class="frame-progress" aria-hidden="true"><span id="progress-bar"></span></div>
+            <iframe id="app-frame" title="Minimal React rows benchmark output"></iframe>
+          </div>
+        </article>
+      </section>
+
+      <footer class="notes">
+        <p id="measurement-note"></p>
+        <p>Each event is followed by a microtask yield, matching discrete React input processing.</p>
+      </footer>
+    </main>
+    <script src="demo-data.js"></script>
+    <script src="demo.js"></script>
+  </body>
+</html>

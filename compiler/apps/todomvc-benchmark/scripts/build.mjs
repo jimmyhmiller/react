@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {APPS} from './apps.mjs';
+import {buildDemo} from './build-demo.mjs';
 import {VARIANTS, variantHasApp} from './variants.mjs';
 
 const require = createRequire(import.meta.url);
@@ -435,6 +436,7 @@ async function build() {
     }
   }
   fs.writeFileSync(path.join(dist, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  buildDemo();
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

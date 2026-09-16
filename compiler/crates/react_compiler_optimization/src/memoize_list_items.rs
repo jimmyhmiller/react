@@ -167,6 +167,11 @@ fn memoize_sites(
         if with_selections {
             read_selections_from_cache(env, site, &cache);
             map_with_selections(func, env, site, &cache);
+        } else if env.config.enable_incremental_list_mapping
+            && env.functions[site.callback.0 as usize].params.len() == 1
+        {
+            map_incrementally(func, env, site, &cache);
+            env.add_incremental_list_item_callback(site.callback);
         }
         // The callback reads the cache (see memoize_list_item_body).
         env.functions[site.callback.0 as usize].context.push(Place {
@@ -649,6 +654,25 @@ fn read_selections_from_cache(env: &mut Environment, site: &Site, cache: &Place)
 
 /// Replaces `items.map(callback)` with `cache.map(items, callback, [selections])`.
 fn map_with_selections(func: &mut HirFunction, env: &mut Environment, site: &Site, cache: &Place) {
+    map_with_cache_method(func, env, site, cache, "map", true);
+}
+
+/// Replaces `items.map(callback)` with
+/// `cache.mapIncremental(items, callback, [])`. This is limited by the caller
+/// to one-parameter callbacks, which cannot observe the changed source array
+/// or an index that may move when a list is edited.
+fn map_incrementally(func: &mut HirFunction, env: &mut Environment, site: &Site, cache: &Place) {
+    map_with_cache_method(func, env, site, cache, "mapIncremental", false);
+}
+
+fn map_with_cache_method(
+    func: &mut HirFunction,
+    env: &mut Environment,
+    site: &Site,
+    cache: &Place,
+    method_name: &str,
+    include_selections: bool,
+) {
     let (items, callback) = match &func.instructions[site.call.0 as usize].value {
         InstructionValue::MethodCall { receiver, args, .. } => {
             let [PlaceOrSpread::Place(callback)] = args.as_slice() else {
@@ -671,7 +695,7 @@ fn map_with_selections(func: &mut HirFunction, env: &mut Environment, site: &Sit
         method.clone(),
         InstructionValue::PropertyLoad {
             object: receiver.clone(),
-            property: PropertyLiteral::String("map".to_string()),
+            property: PropertyLiteral::String(method_name.to_string()),
             loc: None,
         },
     );
@@ -688,18 +712,21 @@ fn map_with_selections(func: &mut HirFunction, env: &mut Environment, site: &Sit
         &mut inserted,
         selections.clone(),
         InstructionValue::ArrayExpression {
-            elements: site
-                .selections
-                .iter()
-                .map(|selection| {
-                    ArrayElement::Place(Place {
-                        identifier: selection.identifier,
-                        effect: Effect::Unknown,
-                        reactive: false,
-                        loc: None,
+            elements: if include_selections {
+                site.selections
+                    .iter()
+                    .map(|selection| {
+                        ArrayElement::Place(Place {
+                            identifier: selection.identifier,
+                            effect: Effect::Unknown,
+                            reactive: false,
+                            loc: None,
+                        })
                     })
-                })
-                .collect(),
+                    .collect()
+            } else {
+                Vec::new()
+            },
             loc: None,
         },
     );

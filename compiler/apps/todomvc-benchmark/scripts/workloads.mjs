@@ -71,6 +71,7 @@ window.__bench = {
 // Page structure of each app: a selector that exists once the app has
 // rendered, and the element whose DOM verify.mjs compares.
 export const APP_PAGES = {
+  'add-rows': {ready: '#add-row', root: '.add-rows-app'},
   todomvc: {ready: '.new-todo', root: '.todoapp'},
   rows: {ready: '#run', root: '.container'},
   'board-context': {ready: '.card', root: '.board-app'},
@@ -80,6 +81,19 @@ export const APP_PAGES = {
 };
 
 export const WORKLOADS = [
+  {
+    app: 'add-rows',
+    name: 'minimal-add-2000',
+    description: 'add 2,000 rows one at a time to a minimal keyed list',
+    setup: '',
+    steps: [
+      {
+        name: 'add-2000',
+        run: `for (let i = 0; i < 2000; i++) { await __bench.click(document.getElementById('add-row')); }`,
+        verify: `__bench.assert(__bench.count('#row-list li') === 2000, 'expected 2000 rows');`,
+      },
+    ],
+  },
   {
     // The step sequence of developit/preact-perf (Speedometer 1 TodoMVC).
     app: 'todomvc',

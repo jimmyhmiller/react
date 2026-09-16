@@ -12,6 +12,12 @@
 // except `css`, which is relative to this package.
 export const APPS = [
   {
+    name: 'add-rows',
+    source: 'AddRowsApp.jsx',
+    entry: 'add-rows-main.jsx',
+    css: 'src/add-rows.css',
+  },
+  {
     name: 'todomvc',
     source: 'TodoApp.jsx',
     entry: 'todomvc-main.jsx',

@@ -2803,6 +2803,7 @@ fn codegen_function_expression(
     // element in a cache provided by `listItemCache.next(N)`.
     let mut unique_identifiers = cx.unique_identifiers.clone();
     let list_item_cache = match cx.env.list_item_callback_cache(lowered_func.func) {
+        Some(_) if cx.env.is_incremental_list_item_callback(lowered_func.func) => None,
         Some(cache) => {
             let mut name_for = |base: &str| {
                 let mut index = 0u32;

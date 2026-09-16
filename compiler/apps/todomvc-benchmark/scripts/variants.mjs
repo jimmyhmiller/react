@@ -14,7 +14,7 @@
 //   - 'local': the build of this repository in <repo>/build/node_modules,
 //              required for compiled blocks. Build it with:
 //              RELEASE_CHANNEL=experimental node scripts/rollup/build.js \
-//                react/index,react/jsx-runtime,react/compiler-runtime,react-dom/index,react-dom/client,scheduler/index \
+//                react/index,react/jsx-runtime,react/compiler-runtime,react-dom/index,react-dom/client,react-dom/src/server/ReactDOMLegacyServerNode,react-dom/src/server/react-dom-server.node,scheduler/index \
 //                --type=NODE_PROD
 // - 'preact': the same React sources, uncompiled, rendered by Preact through
 //   preact/compat.
@@ -73,6 +73,76 @@ export const VARIANTS = [
     compiler: {environment: {enableListItemMemoization: true}},
   },
   {
+    name: 'local/compiler-inlining-lists',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableComponentInlining: true,
+        enableListItemMemoization: true,
+      },
+    },
+  },
+  {
+    name: 'local/compiler-blocks-lists',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableJsxBlocks: true,
+        enableListItemMemoization: true,
+      },
+    },
+  },
+  {
+    name: 'local/compiler-lists-incremental',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableListItemMemoization: true,
+        enableIncrementalListMapping: true,
+      },
+    },
+  },
+  {
+    name: 'local/compiler-inlining-lists-incremental',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableComponentInlining: true,
+        enableListItemMemoization: true,
+        enableIncrementalListMapping: true,
+      },
+    },
+  },
+  {
+    name: 'local/compiler-blocks-lists-incremental',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableJsxBlocks: true,
+        enableListItemMemoization: true,
+        enableIncrementalListMapping: true,
+      },
+    },
+  },
+  {
+    name: 'local/compiler-inlining-blocks-lists-incremental',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {
+        enableComponentInlining: true,
+        enableJsxBlocks: true,
+        enableListItemMemoization: true,
+        enableIncrementalListMapping: true,
+      },
+    },
+  },
+  {
     name: 'local/compiler-lists-context',
     framework: 'react',
     react: 'local',
@@ -105,6 +175,7 @@ export const VARIANTS = [
         enableJsxBlocks: true,
         enableListItemMemoization: true,
         enableContextSelectors: true,
+        enableIncrementalListMapping: true,
       },
     },
   },
@@ -119,6 +190,7 @@ export const VARIANTS = [
         enableListItemMemoization: true,
         enableContextSelectors: true,
         enableUpdateSlicing: true,
+        enableIncrementalListMapping: true,
       },
     },
   },
@@ -143,6 +215,7 @@ export const VARIANTS = [
         enableListItemMemoization: true,
         enableContextSelectors: true,
         enableStaticIslands: true,
+        enableIncrementalListMapping: true,
       },
     },
   },

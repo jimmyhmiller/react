@@ -16,6 +16,7 @@ const RUST_ONLY_ENVIRONMENT_FLAGS: ReadonlyArray<string> = [
   'enableComponentInlining',
   'enableJsxBlocks',
   'enableListItemMemoization',
+  'enableIncrementalListMapping',
   'enableContextSelectors',
   'enableUpdateSlicing',
   'enableStaticIslands',

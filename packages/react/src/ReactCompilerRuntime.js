@@ -549,6 +549,137 @@ class ListItemMemoCache {
     return this.mapAllItems(array, callback, selections, true);
   }
 
+  // Like `map`, but compiler-only callers promise that the callback cannot
+  // observe the item index or source array. When an immutable update preserves
+  // item identities at the start and/or end of the array, reuse those results
+  // without invoking the callback. These callbacks do not call `next`: the
+  // incremental map is itself their memoization boundary.
+  mapIncremental(
+    array: $ReadOnlyArray<mixed>,
+    callback: (
+      item: mixed,
+      index: number,
+      array: $ReadOnlyArray<mixed>,
+    ) => mixed,
+    selections: $ReadOnlyArray<mixed>,
+  ): mixed {
+    this.selections = selections;
+    if (!isArray(array) || array.map !== ArrayPrototypeMap) {
+      this.mapped = null;
+      return (array as any).map(callback);
+    }
+    const mapped = this.mapped;
+    if (
+      mapped === null ||
+      mapped.callback !== callback ||
+      mapped.selections.length !== selections.length
+    ) {
+      return this.mapAllItemsIncremental(array, callback, selections);
+    }
+    for (let i = 0; i < selections.length; i++) {
+      if (mapped.selections[i] !== selections[i]) {
+        return this.mapAllItemsIncremental(array, callback, selections);
+      }
+    }
+    if (mapped.array === array) {
+      return mapped.result;
+    }
+    return this.mapChangedArray(mapped, array, callback, selections);
+  }
+
+  mapAllItemsIncremental(
+    array: $ReadOnlyArray<mixed>,
+    callback: (
+      item: mixed,
+      index: number,
+      array: $ReadOnlyArray<mixed>,
+    ) => mixed,
+    selections: $ReadOnlyArray<mixed>,
+  ): Array<mixed> {
+    const result = ArrayPrototypeMap.call(array, callback);
+    this.previous = [];
+    this.previousKeys = [];
+    this.previousByKey = null;
+    this.mapped = {
+      array,
+      callback,
+      selections,
+      result,
+      comparands: null,
+      itemsByComparand: new Array<null | Map<mixed, Array<number>>>(
+        selections.length,
+      ).fill(null),
+    };
+    return result;
+  }
+
+  mapChangedArray(
+    mapped: MappedList,
+    array: $ReadOnlyArray<mixed>,
+    callback: (
+      item: mixed,
+      index: number,
+      array: $ReadOnlyArray<mixed>,
+    ) => mixed,
+    selections: $ReadOnlyArray<mixed>,
+  ): Array<mixed> {
+    const previousArray = mapped.array;
+    const previousLength = previousArray.length;
+    const length = array.length;
+    const sharedLength = Math.min(previousLength, length);
+    let prefix = 0;
+    while (
+      prefix < sharedLength &&
+      prefix in previousArray === prefix in array &&
+      previousArray[prefix] === array[prefix]
+    ) {
+      prefix++;
+    }
+    let suffix = 0;
+    while (
+      suffix < sharedLength - prefix &&
+      previousLength - 1 - suffix in previousArray ===
+        length - 1 - suffix in array &&
+      previousArray[previousLength - 1 - suffix] === array[length - 1 - suffix]
+    ) {
+      suffix++;
+    }
+
+    const result = new Array<mixed>(length);
+    for (let i = 0; i < prefix; i++) {
+      if (i in mapped.result) {
+        result[i] = mapped.result[i];
+      }
+    }
+    for (let i = 0; i < suffix; i++) {
+      const previousIndex = previousLength - suffix + i;
+      const index = length - suffix + i;
+      if (previousIndex in mapped.result) {
+        result[index] = mapped.result[previousIndex];
+      }
+    }
+
+    for (let i = prefix; i < length - suffix; i++) {
+      if (i in array) {
+        result[i] = callback(array[i], i, array);
+      }
+    }
+    this.previous = [];
+    this.previousKeys = [];
+    this.previousByKey = null;
+    this.mapped = {
+      array,
+      callback,
+      selections,
+      result,
+      comparands: null,
+      itemsByComparand: new Array<null | Map<mixed, Array<number>>>(
+        selections.length,
+      ).fill(null),
+    };
+    return result;
+  }
+
   // Makes `next` and `is` write to the given arrays, and returns the arrays
   // for the comparands.
   startWriting(

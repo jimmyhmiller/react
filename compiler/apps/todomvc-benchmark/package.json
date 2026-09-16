@@ -4,6 +4,7 @@
   "description": "TodoMVC stress benchmark for React Compiler output variants (Rust compiler).",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:demo": "node scripts/build-demo.mjs",
     "bench": "node scripts/bench.mjs"
   },
   "dependencies": {

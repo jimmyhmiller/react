@@ -131,6 +131,8 @@ pub struct Environment {
     /// List item callbacks selected by `MemoizeListItems`, with the variable
     /// that holds each list's `unstable_useListItemMemoCache()` result.
     list_item_callbacks: FxHashMap<FunctionId, IdentifierId>,
+    /// List callbacks whose invocation is already memoized by incremental map.
+    incremental_list_item_callbacks: FxHashSet<FunctionId>,
     /// The function is a hook that returns the value of its one context read
     /// (see `SelectContextReads`): its module registers it with React.
     registers_context_hook: bool,
@@ -239,6 +241,7 @@ impl Environment {
             block_functions: FxHashSet::default(),
             static_island_tags: FxHashSet::default(),
             list_item_callbacks: FxHashMap::default(),
+            incremental_list_item_callbacks: FxHashSet::default(),
             registers_context_hook: false,
             uid_known_names: None,
             config,
@@ -296,6 +299,7 @@ impl Environment {
             block_functions: FxHashSet::default(),
             static_island_tags: FxHashSet::default(),
             list_item_callbacks: FxHashMap::default(),
+            incremental_list_item_callbacks: FxHashSet::default(),
             registers_context_hook: false,
             uid_known_names: self.uid_known_names.clone(),
         }
@@ -999,6 +1003,11 @@ impl Environment {
         self.list_item_callbacks.insert(callback, cache);
     }
 
+    /// Record that an incremental map controls whether this callback runs.
+    pub fn add_incremental_list_item_callback(&mut self, callback: FunctionId) {
+        self.incremental_list_item_callbacks.insert(callback);
+    }
+
     /// Mark the function as a hook to register as a context hook.
     pub fn set_registers_context_hook(&mut self) {
         self.registers_context_hook = true;
@@ -1011,6 +1020,10 @@ impl Environment {
     /// The memo cache variable of a list item callback, if it is one.
     pub fn list_item_callback_cache(&self, callback: FunctionId) -> Option<IdentifierId> {
         self.list_item_callbacks.get(&callback).copied()
+    }
+
+    pub fn is_incremental_list_item_callback(&self, callback: FunctionId) -> bool {
+        self.incremental_list_item_callbacks.contains(&callback)
     }
 
     /// Get the outlined functions accumulated during compilation.

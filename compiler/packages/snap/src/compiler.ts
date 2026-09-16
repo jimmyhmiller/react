@@ -296,13 +296,16 @@ export async function transformFixtureInput(
   // does not have. It is evaluated only with a React build that has them
   // (SNAP_REACT_BUILD, see react-build-alias); the runtime behavior is also
   // tested in packages/react-dom and packages/react-reconciler.
-  const rustOnlyPragma = enableRust ? parseRustOnlyEnvironmentPragma(firstLine) : {};
+  const rustOnlyPragma = enableRust
+    ? parseRustOnlyEnvironmentPragma(firstLine)
+    : {};
   const usesExperimentalRuntime =
     REACT_BUILD === null &&
     enableRust &&
     [
       'enableJsxBlocks',
       'enableListItemMemoization',
+      'enableIncrementalListMapping',
       'enableContextSelectors',
       'enableUpdateSlicing',
       'enableStaticIslands',

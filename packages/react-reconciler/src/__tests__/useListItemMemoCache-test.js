@@ -589,6 +589,60 @@ describe('unstable_useListItemMemoCache()', () => {
     });
   });
 
+  describe('incremental map', () => {
+    function IncrementalList({items}) {
+      const $ = useMemoCache(1);
+      const listItemCache = useListItemMemoCache();
+      let callback;
+      if ($[0] === Symbol.for('react.memo_cache_sentinel')) {
+        callback = item => {
+          const $$ = listItemCache.next(2, item.id);
+          let value;
+          if ($$[0] !== item) {
+            value = process(item.label);
+            $$[0] = item;
+            $$[1] = value;
+          } else {
+            value = $$[1];
+          }
+          return value;
+        };
+        $[0] = callback;
+      } else {
+        callback = $[0];
+      }
+      return listItemCache.mapIncremental(items, callback, []).join(',');
+    }
+
+    it('maps only an appended immutable suffix', async () => {
+      const a = {id: 1, label: 'a'};
+      const b = {id: 2, label: 'b'};
+      const c = {id: 3, label: 'c'};
+      const root = ReactNoop.createRoot();
+      await act(() => root.render(<IncrementalList items={[a, b]} />));
+      assertLog(['process a', 'process b']);
+      await act(() => root.render(<IncrementalList items={[a, b, c]} />));
+      assertLog(['process c']);
+      expect(root).toMatchRenderedOutput('A,B,C');
+    });
+
+    it('reuses an unchanged suffix when items are inserted or removed', async () => {
+      const a = {id: 1, label: 'a'};
+      const b = {id: 2, label: 'b'};
+      const c = {id: 3, label: 'c'};
+      const x = {id: 4, label: 'x'};
+      const root = ReactNoop.createRoot();
+      await act(() => root.render(<IncrementalList items={[a, b, c]} />));
+      assertLog(['process a', 'process b', 'process c']);
+      await act(() => root.render(<IncrementalList items={[a, x, b, c]} />));
+      assertLog(['process x']);
+      expect(root).toMatchRenderedOutput('A,X,B,C');
+      await act(() => root.render(<IncrementalList items={[a, b, c]} />));
+      assertLog([]);
+      expect(root).toMatchRenderedOutput('A,B,C');
+    });
+  });
+
   it('renders correctly after render attempts that did not commit', async () => {
     let resolve;
     const promise = new Promise(r => {
