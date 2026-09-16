@@ -982,7 +982,6 @@ fn is_valid_props_annotation(param: &PatternLike) -> bool {
                     | "BooleanTypeAnnotation"
                     | "EmptyTypeAnnotation"
                     | "FunctionTypeAnnotation"
-                    | "NullLiteralTypeAnnotation"
                     | "NumberLiteralTypeAnnotation"
                     | "NumberTypeAnnotation"
                     | "StringLiteralTypeAnnotation"
@@ -3920,7 +3919,16 @@ pub fn compile_program(mut file: File, scope: ScopeInfo, options: PluginOptions)
 
     // Clone env_config once for all function compilations (avoids per-function clone
     // while satisfying the borrow checker — compile_fn needs &mut context + &env_config)
-    let env_config = options.environment.clone();
+    let mut env_config = options.environment.clone();
+
+    // Mirror babel-plugin-react-compiler's BabelPlugin.ts: in development, enable
+    // the Fast Refresh source-hash check unless the frontend explicitly disabled
+    // it. Frontends (the Babel shim, swc_ecma_react_compiler, Turbopack) report
+    // `is_dev` and expect the compiler to act on it; without this the compiled
+    // memo cache survives an HMR edit with stale, mis-slotted entries.
+    if options.is_dev && env_config.enable_reset_cache_on_source_file_changes.is_none() {
+        env_config.enable_reset_cache_on_source_file_changes = Some(true);
+    }
 
     // Process each function and collect compiled results
     let mut compiled_fns: Vec<CompiledFunction<'_>> = Vec::new();

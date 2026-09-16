@@ -1323,6 +1323,7 @@ fn build_outlined_scope_info(
         ref_node_id_to_binding,
         node_id_to_scope,
         program_scope: ScopeId(0),
+        referenced_names: Vec::new(),
     }
 }
 

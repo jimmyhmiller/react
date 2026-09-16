@@ -41,6 +41,15 @@ export interface ScopeInfo {
   refNodeIdToBinding: Record<number, number>;
   nodeIdToScope: Record<number, number>;
   programScope: number;
+  /**
+   * Every identifier name referenced anywhere in the program, including
+   * undeclared globals. Babel's `Scope.generateUid` refuses names that are
+   * bound, referenced, or global (`hasBinding || hasGlobal || hasReference`);
+   * the Rust side seeds its uid generator from this list so generated names
+   * (outlined `_temp` helpers, imports, cache variables) never shadow a
+   * global the source code relies on.
+   */
+  referencedNames: Array<string>;
 }
 
 /**
@@ -384,6 +393,16 @@ export function extractScopeInfo(program: NodePath<t.Program>): ScopeInfo {
   const programScopeUid = String((program.scope as any).uid);
   const programScopeId = scopeUidToId.get(programScopeUid) ?? 0;
 
+  // Babel tracks undeclared references (`globals`) and every referenced name
+  // (`references`) on the program scope; both feed generateUid's conflict check.
+  const referencedNames = new Set<string>();
+  for (const name of Object.keys((program.scope as any).globals ?? {})) {
+    referencedNames.add(name);
+  }
+  for (const name of Object.keys((program.scope as any).references ?? {})) {
+    referencedNames.add(name);
+  }
+
   return {
     scopes,
     bindings,
@@ -393,6 +412,7 @@ export function extractScopeInfo(program: NodePath<t.Program>): ScopeInfo {
     refNodeIdToBinding,
     nodeIdToScope,
     programScope: programScopeId,
+    referencedNames: Array.from(referencedNames),
   };
 }
 

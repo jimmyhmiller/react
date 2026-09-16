@@ -46,13 +46,14 @@ pub enum ErrorSeverity {
 }
 
 impl ErrorCategory {
+    /// Matches the TS compiler's `getRuleForCategory(category).severity`. Note
+    /// that this is distinct from the "Compilation Skipped" printed heading,
+    /// which is keyed off a separate table (`format_category_heading`).
     pub fn severity(&self) -> ErrorSeverity {
         match self {
-            // These map to "Compilation Skipped" (Warning severity)
-            ErrorCategory::EffectDependencies
-            | ErrorCategory::IncompatibleLibrary
-            | ErrorCategory::PreserveManualMemo
-            | ErrorCategory::UnsupportedSyntax => ErrorSeverity::Warning,
+            ErrorCategory::IncompatibleLibrary | ErrorCategory::UnsupportedSyntax => {
+                ErrorSeverity::Warning
+            }
 
             // Todo is Hint
             ErrorCategory::Todo => ErrorSeverity::Hint,
@@ -62,16 +63,11 @@ impl ErrorCategory {
         }
     }
 
-    /// The severity to use in logged output, matching the TS compiler's
-    /// `getRuleForCategory()`. This may differ from the internal `severity()`
-    /// used for panicThreshold logic. In particular, `PreserveManualMemo` is
-    /// `Warning` internally (so it doesn't trigger panicThreshold throws) but
-    /// `Error` in logged output (matching TS behavior).
+    /// The severity to use in logged output. Identical to `severity()`: the TS
+    /// compiler serializes `detail.severity` (i.e. `getRuleForCategory()`) into
+    /// its `CompileError` logger events.
     pub fn logged_severity(&self) -> ErrorSeverity {
-        match self {
-            ErrorCategory::PreserveManualMemo => ErrorSeverity::Error,
-            _ => self.severity(),
-        }
+        self.severity()
     }
 }
 

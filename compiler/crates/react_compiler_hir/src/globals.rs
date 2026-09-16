@@ -2151,6 +2151,7 @@ fn build_typed_globals(
         shapes,
         Vec::new(),
         FunctionSignatureBuilder {
+            rest_param: Some(Effect::Read),
             return_type: Type::Poly,
             return_value_kind: ValueKind::Mutable,
             impure: true,

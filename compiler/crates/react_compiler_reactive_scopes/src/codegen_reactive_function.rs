@@ -2873,8 +2873,15 @@ fn codegen_object_expression(
                 match obj_prop.property_type {
                     ObjectPropertyType::Property => {
                         let value = codegen_place_to_expression(cx, &obj_prop.place)?;
-                        let is_shorthand = matches!(&key, Expression::Identifier(k_id)
-                            if matches!(&value, Expression::Identifier(v_id) if v_id.name == k_id.name));
+                        // `shorthand` is only meaningful for a non-computed identifier key.
+                        // `{ [k]: k }` has an Identifier key too, but marking it shorthand
+                        // produces an AST Babel's validator rejects (shorthand requires
+                        // computed=false); Babel's printer happens to check `computed`
+                        // first, but SWC/oxc frontends check `shorthand` first and print
+                        // `{ k }`, silently changing the object's key.
+                        let is_shorthand = matches!(obj_prop.key, ObjectPropertyKey::Identifier { .. })
+                            && matches!(&key, Expression::Identifier(k_id)
+                                if matches!(&value, Expression::Identifier(v_id) if v_id.name == k_id.name));
                         ast_properties.push(ast_expr::ObjectExpressionProperty::ObjectProperty(
                             ast_expr::ObjectProperty {
                                 base: BaseNode::typed("ObjectProperty"),
@@ -3382,8 +3389,10 @@ fn codegen_object_pattern(
             ObjectPropertyOrSpread::Property(obj_prop) => {
                 let key = codegen_object_property_key(cx, &obj_prop.key)?;
                 let value = codegen_lvalue(cx, &LvalueRef::Place(&obj_prop.place))?;
-                let is_shorthand = matches!(&key, Expression::Identifier(k_id)
-                    if matches!(&value, PatternLike::Identifier(v_id) if v_id.name == k_id.name));
+                // Same rule as for object expressions: never shorthand a computed key.
+                let is_shorthand = matches!(obj_prop.key, ObjectPropertyKey::Identifier { .. })
+                    && matches!(&key, Expression::Identifier(k_id)
+                        if matches!(&value, PatternLike::Identifier(v_id) if v_id.name == k_id.name));
                 Ok(ObjectPatternProperty::ObjectProperty(ObjectPatternProp {
                     base: BaseNode::typed("ObjectProperty"),
                     key: Box::new(key),

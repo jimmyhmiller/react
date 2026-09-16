@@ -1162,13 +1162,6 @@ fn get_assumed_invoked_functions_impl(
                         }
                     }
                 }
-                InstructionValue::JsxFragment { children, .. } => {
-                    for child in children {
-                        if let Some(entry) = temporaries.get(&child.identifier) {
-                            hoistable.insert(entry.0);
-                        }
-                    }
-                }
                 InstructionValue::FunctionExpression { lowered_func, .. } => {
                     // Recursively traverse into other function expressions
                     // TS passes the shared temporaries map to the recursive call

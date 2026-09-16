@@ -100,6 +100,15 @@ function parseConfigPragmaEnvironmentForTest(
         maybeConfig[key] = [parsedVal.split('.')[0]];
         continue;
       }
+      if (
+        key === 'customHooks' &&
+        typeof parsedVal === 'object' &&
+        parsedVal != null
+      ) {
+        // The schema expects a Map, but pragmas can only express JSON objects
+        maybeConfig[key] = new Map(Object.entries(parsedVal));
+        continue;
+      }
       maybeConfig[key] = parsedVal;
     }
   }

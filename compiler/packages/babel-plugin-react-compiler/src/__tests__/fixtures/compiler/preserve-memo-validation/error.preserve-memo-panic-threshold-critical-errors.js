@@ -1,0 +1,8 @@
+// @validatePreserveExistingMemoizationGuarantees @validateExhaustiveMemoizationDependencies:false @panicThreshold:"critical_errors"
+import {useMemo} from 'react';
+
+function Component({propA}) {
+  return useMemo(() => {
+    return propA.x();
+  }, [propA.x]);
+}

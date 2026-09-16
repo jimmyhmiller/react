@@ -4900,9 +4900,7 @@ fn lower_assignment(
                                 let start = id.base.start.unwrap_or(0);
                                 let is_context =
                                     builder.is_context_identifier(&id.name, start, id.base.node_id);
-                                let can_use_direct = !force_temporaries
-                                    && (matches!(assignment_style, AssignmentStyle::Assignment)
-                                        || !is_context);
+                                let can_use_direct = !force_temporaries && !is_context;
                                 if can_use_direct {
                                     match lower_identifier_for_assignment(
                                         builder,

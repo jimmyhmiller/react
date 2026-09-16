@@ -125,23 +125,34 @@ function serializeEnvironment(
   return environment;
 }
 
+/**
+ * Same default as `defaultOptions.sources` in babel-plugin-react-compiler:
+ * never compile third-party code unless the user opts in explicitly.
+ */
+const DEFAULT_SOURCES = (filename: string): boolean =>
+  filename.indexOf('node_modules') === -1;
+
 export function resolveOptions(
   rawOpts: PluginOptions,
   file: BabelCore.BabelFile,
   filename: string | null,
   ast: t.File,
 ): ResolvedOptions {
-  // Resolve sources filter (may be a function)
+  // Resolve sources filter (may be a function). Mirrors the TS plugin's
+  // `defaultOptions.sources`: when the option is omitted, files under
+  // node_modules are skipped. Only an explicit `null` disables filtering.
+  const sources =
+    rawOpts.sources === undefined ? DEFAULT_SOURCES : rawOpts.sources;
   let shouldCompile = true;
-  if (rawOpts.sources != null && filename != null) {
-    if (typeof rawOpts.sources === 'function') {
-      shouldCompile = rawOpts.sources(filename);
-    } else if (Array.isArray(rawOpts.sources)) {
-      shouldCompile = rawOpts.sources.some(
+  if (sources != null && filename != null) {
+    if (typeof sources === 'function') {
+      shouldCompile = sources(filename);
+    } else if (Array.isArray(sources)) {
+      shouldCompile = sources.some(
         (prefix: string) => filename.indexOf(prefix) !== -1,
       );
     }
-  } else if (rawOpts.sources != null && filename == null) {
+  } else if (sources != null && filename == null) {
     shouldCompile = false; // sources specified but no filename
   }
 
@@ -155,6 +166,17 @@ export function resolveOptions(
     (typeof globalThis !== 'undefined' &&
       (globalThis as any).__DEV__ === true) ||
     process.env['NODE_ENV'] === 'development';
+
+  // Mirror the TS plugin (BabelPlugin.ts): in development, enable the
+  // Fast Refresh source-hash check unless the user explicitly disabled it.
+  // The Rust core only emits the cache-reset preamble when this flag is
+  // literally `true`; it does not consult `isDev` itself.
+  const rawEnvironment = {
+    ...((rawOpts.environment as Record<string, unknown>) ?? {}),
+  };
+  if (isDev && rawEnvironment.enableResetCacheOnSourceFileChanges !== false) {
+    rawEnvironment.enableResetCacheOnSourceFileChanges = true;
+  }
 
   return {
     shouldCompile,
@@ -172,9 +194,6 @@ export function resolveOptions(
     flowSuppressions: rawOpts.flowSuppressions ?? true,
     ignoreUseNoForget: rawOpts.ignoreUseNoForget ?? false,
     customOptOutDirectives: rawOpts.customOptOutDirectives ?? null,
-    environment: serializeEnvironment(
-      (rawOpts.environment as Record<string, unknown>) ?? {},
-      ast,
-    ),
+    environment: serializeEnvironment(rawEnvironment, ast),
   };
 }

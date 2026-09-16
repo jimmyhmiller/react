@@ -142,6 +142,12 @@ impl ProgramContext {
         for binding in &scope.bindings {
             self.known_referenced_names.insert(binding.name.clone());
         }
+        // Undeclared globals and other referenced names: Babel's generateUid
+        // also refuses these (`hasGlobal || hasReference`), otherwise an
+        // outlined `_temp` helper could shadow a global the code calls.
+        for name in &scope.referenced_names {
+            self.known_referenced_names.insert(name.clone());
+        }
     }
 
     /// Check if a name conflicts with known references.

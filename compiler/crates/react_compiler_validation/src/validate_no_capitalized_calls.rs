@@ -11,8 +11,13 @@ pub fn validate_no_capitalized_calls(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
-    // Build the allow list from global registry keys + config entries
-    let mut allow_list: FxHashSet<String> = env.globals().keys().cloned().collect();
+    // Build the allow list from the *default* globals + config entries. Note that this
+    // intentionally excludes custom hooks registered on the environment's global registry,
+    // matching TS which seeds from DEFAULT_GLOBALS.
+    let mut allow_list: FxHashSet<String> = react_compiler_hir::globals::base_globals()
+        .keys()
+        .cloned()
+        .collect();
     if let Some(config_entries) = &env.config.validate_no_capitalized_calls {
         for entry in config_entries {
             allow_list.insert(entry.clone());

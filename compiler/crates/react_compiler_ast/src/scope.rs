@@ -146,6 +146,12 @@ pub struct ScopeInfo {
 
     /// The program-level (module) scope. Always scopes[0].
     pub program_scope: ScopeId,
+
+    /// Every identifier name referenced anywhere in the program, including
+    /// undeclared globals. Seeds uid generation so generated names never shadow
+    /// a global the source relies on (Babel: `hasGlobal || hasReference`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referenced_names: Vec<String>,
 }
 
 impl ScopeInfo {

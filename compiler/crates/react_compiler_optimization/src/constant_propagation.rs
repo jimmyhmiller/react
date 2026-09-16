@@ -904,9 +904,17 @@ fn evaluate_binary_op(
             _ => None,
         },
         BinaryOperator::Exponent => match (lhs, rhs) {
-            (PrimitiveValue::Number(l), PrimitiveValue::Number(r)) => Some(PrimitiveValue::Number(
-                FloatValue::new(l.value().powf(r.value())),
-            )),
+            (PrimitiveValue::Number(l), PrimitiveValue::Number(r)) => {
+                let (base, exp) = (l.value(), r.value());
+                // JS `**` differs from IEEE pow: a NaN exponent, or |base| == 1
+                // with an infinite exponent, is NaN rather than 1.
+                let result = if exp.is_nan() || (exp.is_infinite() && base.abs() == 1.0) {
+                    f64::NAN
+                } else {
+                    base.powf(exp)
+                };
+                Some(PrimitiveValue::Number(FloatValue::new(result)))
+            }
             _ => None,
         },
         BinaryOperator::BitwiseOr => match (lhs, rhs) {
@@ -1041,6 +1049,16 @@ fn js_to_number(s: &str) -> f64 {
             Err(_) => f64::NAN,
         };
     }
+    // Rust's f64 parser accepts "inf"/"infinity"/"nan" (any case); JS ToNumber does not.
+    // The exact `Infinity` spellings are handled above, so any purely alphabetic
+    // remainder is NaN in JS.
+    if trimmed
+        .trim_start_matches(['+', '-'])
+        .chars()
+        .all(|c| c.is_ascii_alphabetic())
+    {
+        return f64::NAN;
+    }
     trimmed.parse::<f64>().unwrap_or(f64::NAN)
 }
 
@@ -1098,14 +1116,10 @@ fn js_to_int32(n: f64) -> i32 {
     if n.is_nan() || n.is_infinite() || n == 0.0 {
         return 0;
     }
-    // Truncate, then wrap to 32 bits
-    let int64 = (n.trunc() as i64) & 0xFFFFFFFF;
-    // Reinterpret as signed i32
-    if int64 >= 0x80000000 {
-        (int64 as u32) as i32
-    } else {
-        int64 as i32
-    }
+    // Wrap in f64: `as i64` saturates at +/-2^63, which loses modulo-2^32 semantics.
+    // `rem_euclid` by a power of two is exact and yields a value in [0, 2^32).
+    let wrapped = n.trunc().rem_euclid(4294967296.0);
+    wrapped as u32 as i32
 }
 
 /// ECMAScript ToUint32: convert f64 to u32 with modular (wrapping) semantics.

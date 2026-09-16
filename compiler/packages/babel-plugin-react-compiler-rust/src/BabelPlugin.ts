@@ -165,7 +165,17 @@ export default function BabelPluginReactCompilerRust(
             // pass.file.ast.program bypasses Babel's traversal tracking,
             // and prog.skip() would prevent all merged plugin visitors from
             // running on the new children.
-            pass.file.ast.comments = [];
+            //
+            // Note: `pass.file.ast.comments` must be left intact. Babel's own
+            // generator never prints from that array (it prints node-attached
+            // comments, which deduplicateComments() above keeps consistent),
+            // but downstream plugins read it for file-level pragmas:
+            // @babel/plugin-transform-react-jsx looks up `@jsxImportSource`,
+            // `@jsxRuntime`, `@jsx` and `@jsxFrag` there, and
+            // @babel/plugin-transform-typescript looks up `@jsx` there. The
+            // TS plugin compiles in place and never touches this array, so
+            // clearing it here would silently change how JSX is compiled for
+            // any file that relies on a pragma comment.
             prog.replaceWith(newProgram);
           }
 
