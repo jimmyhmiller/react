@@ -15,6 +15,21 @@ the OXC row predates the fixtures and has not been re-measured.
 
 `cargo test --workspace`: 84 passed, 0 failed.
 
+## Compiler feature backlog
+
+- [ ] **Support spread syntax for hook arguments.** Calls such as
+  `useCustomHook(...args)` can currently bail out with
+  `Todo: Support spread syntax for hook arguments`. Implement sound handling
+  of spread arguments during mutation/aliasing effect inference, including
+  mutable iterators and hook argument freezing, in both the TypeScript and
+  Rust compilers. The existing bailout sites are in
+  `compiler/packages/babel-plugin-react-compiler/src/Inference/InferMutationAliasingEffects.ts`
+  and `compiler/crates/react_compiler_inference/src/infer_mutation_aliasing_effects.rs`.
+  Use the existing `error.todo-hook-call-spreads-mutable-iterator.expect.md`
+  fixture as a starting point; verify argument evaluation and iteration order,
+  mutation/aliasing semantics, and TypeScript/Rust parity before removing the
+  bailout.
+
 ## SWC
 
 (Historical, pre-ts-interop-stack triage on the old staging base; current
