@@ -78,9 +78,72 @@ export const APP_PAGES = {
   'board-zustand': {ready: '.card', root: '.board-app'},
   'board-redux': {ready: '.card', root: '.board-app'},
   docs: {ready: '.docs-footer', root: '.docs-app'},
+  listeners: {ready: '#bump', root: '.listeners-app'},
+  'select-zustand-render': {ready: '.card', root: '.select-app'},
+  'select-zustand-selector': {ready: '.card', root: '.select-app'},
+  'select-jotai': {ready: '.card', root: '.select-app'},
 };
 
 export const WORKLOADS = [
+  ...[
+    'select-zustand-render',
+    'select-zustand-selector',
+    'select-jotai',
+  ].flatMap(app => [
+    {
+      app,
+      name: `${app}/select`,
+      description: 'select 20 different cards of 1,000',
+      setup: '',
+      steps: [
+        {
+          name: 'select-x20',
+          run: `const titles = document.querySelectorAll('.card-title'); for (let i = 0; i < 20; i++) { await __bench.click(titles[(i * 47) % titles.length]); }`,
+          verify: `__bench.assert(__bench.count('.card.selected') === 1 && document.querySelectorAll('.card-title')[(19 * 47) % 1000].parentElement.classList.contains('selected'), 'expected the last clicked card to be the one selected card');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/notify`,
+      description: 'update a counter no card reads, 500 times',
+      setup: '',
+      steps: [
+        {
+          name: 'notify-x500',
+          run: `for (let i = 0; i < 500; i++) { await __bench.click(document.getElementById('notify')); }`,
+          verify: `__bench.assert(document.getElementById('notifications').textContent === '500', 'expected 500 notifications');`,
+        },
+      ],
+    },
+    {
+      app,
+      name: `${app}/rename`,
+      description: 'rename 200 cards, one at a time',
+      setup: '',
+      steps: [
+        {
+          name: 'rename-x200',
+          run: `for (let i = 0; i < 200; i++) { await __bench.click(document.getElementById('rename')); }`,
+          verify: `__bench.assert([...document.querySelectorAll('.card-title')].filter(title => title.textContent.endsWith('!')).length === 200, 'expected 200 renamed cards');`,
+        },
+      ],
+    },
+  ]),
+  {
+    app: 'listeners',
+    name: 'listeners-5000',
+    description:
+      'update a store field read by 1 of 5,001 subscribed components, 200 times',
+    setup: '',
+    steps: [
+      {
+        name: 'bump-x200',
+        run: `for (let i = 0; i < 200; i++) { await __bench.click(document.getElementById('bump')); }`,
+        verify: `__bench.assert(document.getElementById('tick').textContent === '200' && __bench.count('.cell') === 5000, 'expected tick 200 and 5000 cells');`,
+      },
+    ],
+  },
   {
     app: 'add-rows',
     name: 'minimal-add-2000',
@@ -121,7 +184,8 @@ export const WORKLOADS = [
   {
     app: 'todomvc',
     name: 'add-1000',
-    description: 'add 1000 todos one at a time (each add renders the growing list)',
+    description:
+      'add 1000 todos one at a time (each add renders the growing list)',
     setup: '',
     steps: [
       {
@@ -160,7 +224,8 @@ export const WORKLOADS = [
   {
     app: 'todomvc',
     name: 'filter-cycle-1000',
-    description: 'with 1000 todos (half completed), cycle Active/Completed/All 10 times',
+    description:
+      'with 1000 todos (half completed), cycle Active/Completed/All 10 times',
     setup: `await __bench.addTodos(1000, 'Task'); const toggles = Array.from(document.querySelectorAll('.toggle')); for (let i = 0; i < toggles.length; i += 2) { await __bench.click(toggles[i]); }`,
     steps: [
       {
@@ -173,7 +238,8 @@ export const WORKLOADS = [
   {
     app: 'todomvc',
     name: 'edit-one-of-1000',
-    description: 'with 1000 todos, edit one title: start editing, type 30 characters, save',
+    description:
+      'with 1000 todos, edit one title: start editing, type 30 characters, save',
     setup: `await __bench.addTodos(1000, 'Task');`,
     steps: [
       {
@@ -380,7 +446,8 @@ export const WORKLOADS = [
     {
       app,
       name: `${app}/filter`,
-      description: 'type a 6-character filter, then delete it character by character',
+      description:
+        'type a 6-character filter, then delete it character by character',
       setup: '',
       steps: [
         {
@@ -446,7 +513,8 @@ export const WORKLOADS = [
   {
     app: 'docs',
     name: 'docs/search',
-    description: 'type a 6-character search into the sidebar filter, then delete it',
+    description:
+      'type a 6-character search into the sidebar filter, then delete it',
     setup: '',
     steps: [
       {

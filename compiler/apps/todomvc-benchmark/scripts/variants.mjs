@@ -143,6 +143,20 @@ export const VARIANTS = [
     },
   },
   {
+    name: 'local/compiler-context',
+    framework: 'react',
+    react: 'local',
+    compiler: {environment: {enableContextSelectors: true}},
+  },
+  {
+    name: 'local/compiler-context-reads',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      environment: {enableContextSelectors: true, enableSelectorReads: true},
+    },
+  },
+  {
     name: 'local/compiler-lists-context',
     framework: 'react',
     react: 'local',
@@ -216,6 +230,85 @@ export const VARIANTS = [
         enableContextSelectors: true,
         enableStaticIslands: true,
         enableIncrementalListMapping: true,
+      },
+    },
+  },
+  // The same optimizations with the map-inlining compiler build (see
+  // build.mjs), added one at a time.
+  {
+    name: 'local/map-inlining',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      plugin: 'map-inlining',
+      environment: {
+        enableComponentInlining: true,
+      },
+    },
+  },
+  {
+    name: 'local/map-inlining-lists',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      plugin: 'map-inlining',
+      environment: {
+        enableComponentInlining: true,
+        enableListItemMemoization: true,
+      },
+    },
+  },
+  {
+    name: 'local/map-inlining-blocks',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      plugin: 'map-inlining',
+      environment: {
+        enableComponentInlining: true,
+        enableJsxBlocks: true,
+      },
+    },
+  },
+  {
+    name: 'local/map-inlining-blocks-lists',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      plugin: 'map-inlining',
+      environment: {
+        enableComponentInlining: true,
+        enableJsxBlocks: true,
+        enableListItemMemoization: true,
+      },
+    },
+  },
+  {
+    name: 'local/map-inlining-blocks-lists-incremental',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      plugin: 'map-inlining',
+      environment: {
+        enableComponentInlining: true,
+        enableJsxBlocks: true,
+        enableListItemMemoization: true,
+        enableIncrementalListMapping: true,
+      },
+    },
+  },
+  {
+    name: 'local/map-inlining-all',
+    framework: 'react',
+    react: 'local',
+    compiler: {
+      plugin: 'map-inlining',
+      environment: {
+        enableComponentInlining: true,
+        enableJsxBlocks: true,
+        enableListItemMemoization: true,
+        enableIncrementalListMapping: true,
+        enableContextSelectors: true,
       },
     },
   },

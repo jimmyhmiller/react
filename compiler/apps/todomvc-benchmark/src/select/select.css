@@ -1,0 +1,12 @@
+.select-app ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0;
+  list-style: none;
+  font: 10px sans-serif;
+}
+
+.card.selected {
+  outline: 2px solid tomato;
+}

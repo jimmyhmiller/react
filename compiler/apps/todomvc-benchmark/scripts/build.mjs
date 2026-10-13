@@ -32,13 +32,26 @@ const REPO_ROOT = path.resolve(COMPILER_ROOT, '..');
 const LOCAL_REACT = path.join(REPO_ROOT, 'build', 'node_modules');
 const babel = require(path.join(COMPILER_ROOT, 'node_modules/@babel/core'));
 const esbuild = require(path.join(COMPILER_ROOT, 'node_modules/esbuild'));
-const presetReact = path.join(COMPILER_ROOT, 'node_modules/@babel/preset-react');
+const presetReact = path.join(
+  COMPILER_ROOT,
+  'node_modules/@babel/preset-react'
+);
 // Framework packages are installed in this directory.
 const requireFromApp = createRequire(path.join(ROOT, 'package.json'));
-const rustPluginPath = path.join(
-  COMPILER_ROOT,
-  'packages/babel-plugin-react-compiler-rust/dist/index.js',
-);
+// `compiler.plugin` selects the Rust Babel plugin build: this worktree's, or
+// 'map-inlining', the build of the .worktrees/unsafe-map-inline-demo worktree,
+// whose component inlining also inlines components into .map callbacks.
+const rustPluginPaths = {
+  default: path.join(
+    COMPILER_ROOT,
+    'packages/babel-plugin-react-compiler-rust/dist/index.js'
+  ),
+  'map-inlining': path.join(
+    REPO_ROOT,
+    '..',
+    'unsafe-map-inline-demo/compiler/packages/babel-plugin-react-compiler-rust/dist/index.js'
+  ),
+};
 
 function compileApp(variant, app) {
   return compileModule(variant, path.join(ROOT, 'src', app.source));
@@ -49,6 +62,13 @@ function compileModule(variant, filename) {
   const events = [];
   const plugins = [];
   if (variant.compiler !== null) {
+    const rustPluginPath =
+      rustPluginPaths[variant.compiler.plugin ?? 'default'];
+    if (rustPluginPath === undefined) {
+      throw new Error(
+        `Variant '${variant.name}' has an unknown compiler plugin '${variant.compiler.plugin}'.`
+      );
+    }
     const rustPlugin = require(rustPluginPath).default;
     plugins.push([
       rustPlugin,
@@ -71,7 +91,7 @@ function compileModule(variant, filename) {
   const failures = events.filter(event => event.kind !== 'CompileSuccess');
   if (failures.length !== 0) {
     throw new Error(
-      `Variant '${variant.name}' did not compile cleanly:\n${JSON.stringify(failures, null, 2)}`,
+      `Variant '${variant.name}' did not compile cleanly:\n${JSON.stringify(failures, null, 2)}`
     );
   }
   return {
@@ -84,7 +104,10 @@ function compileModule(variant, filename) {
 function renderedComponents(code) {
   const names = new Set();
   for (const match of code.matchAll(/_jsxs?\(([A-Z][A-Za-z0-9]*)[,)]/g)) {
-    if (!match[1].startsWith('_BlockTemplate') && !match[1].startsWith('BlockTemplate')) {
+    if (
+      !match[1].startsWith('_BlockTemplate') &&
+      !match[1].startsWith('BlockTemplate')
+    ) {
       names.add(match[1]);
     }
   }
@@ -101,7 +124,7 @@ function reactAliases(variant) {
   }
   if (!fs.existsSync(path.join(LOCAL_REACT, 'react-dom'))) {
     throw new Error(
-      `Variant '${variant.name}' needs a local React build in ${LOCAL_REACT}. See scripts/variants.mjs.`,
+      `Variant '${variant.name}' needs a local React build in ${LOCAL_REACT}. See scripts/variants.mjs.`
     );
   }
   return {
@@ -148,7 +171,7 @@ function sveltePlugin() {
         if (warnings.length !== 0) {
           throw new Error(
             `Svelte compiler warnings in ${file}:\n` +
-              warnings.map(w => `${w.code}: ${w.message}`).join('\n'),
+              warnings.map(w => `${w.code}: ${w.message}`).join('\n')
           );
         }
       };
@@ -190,7 +213,7 @@ function vuePlugin() {
         const {descriptor, errors} = sfc.parse(source, {filename: args.path});
         if (errors.length !== 0) {
           throw new Error(
-            `Vue SFC errors in ${args.path}:\n${errors.map(String).join('\n')}`,
+            `Vue SFC errors in ${args.path}:\n${errors.map(String).join('\n')}`
           );
         }
         const id = crypto
@@ -245,7 +268,7 @@ function writePage(outDir, app, variant) {
 <head><meta charset="utf-8"><title>${app.name}: ${variant.name}</title><link rel="stylesheet" href="index.css"></head>
 <body><div id="root"></div><script src="bundle.js"></script></body>
 </html>
-`,
+`
   );
 }
 
@@ -261,7 +284,7 @@ async function buildReactVariant(variant, app, outDir) {
   // The app's other modules (like its stores) are compiled like the app, as
   // the compiler runs on every module of an app.
   const modulePaths = new Set(
-    (app.modules ?? []).map(module => path.join(ROOT, 'src', module)),
+    (app.modules ?? []).map(module => path.join(ROOT, 'src', module))
   );
   const compiledModules = {
     name: 'compiled-modules',
@@ -280,7 +303,7 @@ async function buildReactVariant(variant, app, outDir) {
   const compiledPath = path.join(
     ROOT,
     'src',
-    app.source.replace('.jsx', '.compiled.js'),
+    app.source.replace('.jsx', '.compiled.js')
   );
   fs.writeFileSync(compiledPath, code);
   try {
@@ -297,7 +320,10 @@ async function buildReactVariant(variant, app, outDir) {
       outfile: path.join(outDir, 'bundle.js'),
       logLevel: 'error',
     });
-    fs.copyFileSync(compiledPath, path.join(outDir, path.basename(compiledPath)));
+    fs.copyFileSync(
+      compiledPath,
+      path.join(outDir, path.basename(compiledPath))
+    );
     if (variant.framework === 'react') {
       await buildServerRenderedPage(variant, app, outDir, compiledPath, {
         alias: options.alias,
@@ -329,7 +355,13 @@ function Root() {
 // Builds dist/<variant>/<app>/ssr/: the app rendered to HTML with the
 // variant's React server renderer, and a bundle that hydrates it (see
 // verify.mjs --ssr).
-async function buildServerRenderedPage(variant, app, outDir, compiledPath, options) {
+async function buildServerRenderedPage(
+  variant,
+  app,
+  outDir,
+  compiledPath,
+  options
+) {
   const ssrDir = path.join(outDir, 'ssr');
   fs.mkdirSync(ssrDir, {recursive: true});
   const appImport = './' + path.basename(compiledPath);
@@ -377,14 +409,16 @@ async function buildServerRenderedPage(variant, app, outDir, compiledPath, optio
 <head><meta charset="utf-8"><title>${app.name}: ${variant.name} (server rendered)</title><link rel="stylesheet" href="index.css"></head>
 <body><div id="root">${html}</div><script src="bundle.js"></script></body>
 </html>
-`,
+`
   );
 }
 
 async function buildFrameworkVariant(variant, app, outDir) {
   const options = frameworkBuildOptions(variant);
   await esbuild.build({
-    entryPoints: [path.join(ROOT, 'src', app.frameworkEntries[variant.framework])],
+    entryPoints: [
+      path.join(ROOT, 'src', app.frameworkEntries[variant.framework]),
+    ],
     bundle: true,
     minify: MINIFY,
     format: 'iife',
@@ -411,9 +445,17 @@ async function build() {
       }
       const outDir = path.join(dist, variant.name, app.name);
       fs.mkdirSync(outDir, {recursive: true});
-      const entry = {variant: variant.name, framework: variant.framework, app: app.name};
+      const entry = {
+        variant: variant.name,
+        framework: variant.framework,
+        app: app.name,
+      };
       if (variant.framework === 'react' || variant.framework === 'preact') {
-        const {code, compiledFunctions} = await buildReactVariant(variant, app, outDir);
+        const {code, compiledFunctions} = await buildReactVariant(
+          variant,
+          app,
+          outDir
+        );
         const components = renderedComponents(code);
         Object.assign(entry, {
           react: variant.react ?? null,
@@ -424,18 +466,23 @@ async function build() {
         console.log(
           variant.framework === 'preact'
             ? `${variant.name} ${app.name}: React sources rendered by preact/compat`
-            : `${variant.name} ${app.name}: ${compiledFunctions} compiled function(s); ${blockTemplateCount(code)} block template(s); components rendered as elements: ${components.join(', ')}`,
+            : `${variant.name} ${app.name}: ${compiledFunctions} compiled function(s); ${blockTemplateCount(code)} block template(s); components rendered as elements: ${components.join(', ')}`
         );
       } else {
         await buildFrameworkVariant(variant, app, outDir);
-        console.log(`${variant.name} ${app.name}: src/${app.frameworkEntries[variant.framework]}`);
+        console.log(
+          `${variant.name} ${app.name}: src/${app.frameworkEntries[variant.framework]}`
+        );
       }
       writePage(outDir, app, variant);
       entry.bundleBytes = fs.statSync(path.join(outDir, 'bundle.js')).size;
       manifest.push(entry);
     }
   }
-  fs.writeFileSync(path.join(dist, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  fs.writeFileSync(
+    path.join(dist, 'manifest.json'),
+    JSON.stringify(manifest, null, 2)
+  );
   buildDemo();
 }
 

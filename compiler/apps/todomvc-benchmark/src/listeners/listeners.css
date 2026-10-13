@@ -1,0 +1,6 @@
+.cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  font: 10px sans-serif;
+}
