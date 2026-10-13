@@ -56,7 +56,7 @@
 //! Selections. A value that the callback captures from the component and uses
 //! only as an operand of `===` or `!==` in its own body (such as `selectedId`
 //! in `item.id === selectedId`) is a *selection*. The comparisons become calls
-//! of `listItemCache.is(index, comparand)`, which evaluate the same comparison
+//! of `listItemCache.matchesSelection(index, comparand)`, which evaluate the same comparison
 //! against the value passed to `listItemCache.map`, and the `.map` call becomes
 //! `listItemCache.map(items, callback, [selections])`. The callback no longer
 //! captures the selections, so its memoization no longer depends on them.
@@ -535,7 +535,7 @@ fn remove_from_nested_contexts(
 }
 
 /// Replaces the comparisons of the callback's selections with
-/// `cache.is(index, comparand)` and removes the selections from the callback.
+/// `cache.matchesSelection(index, comparand)` and removes the selections from the callback.
 fn read_selections_from_cache(env: &mut Environment, site: &Site, cache: &Place) {
     let mut removed_loads: FxHashSet<InstructionId> = FxHashSet::default();
     let mut replacements: FxHashMap<InstructionId, usize> = FxHashMap::default();
@@ -600,7 +600,7 @@ fn read_selections_from_cache(env: &mut Environment, site: &Site, cache: &Place)
                 method.clone(),
                 InstructionValue::PropertyLoad {
                     object: receiver.clone(),
-                    property: PropertyLiteral::String("is".to_string()),
+                    property: PropertyLiteral::String("matchesSelection".to_string()),
                     loc: None,
                 },
             );

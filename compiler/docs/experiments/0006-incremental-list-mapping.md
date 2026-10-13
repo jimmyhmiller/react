@@ -48,7 +48,7 @@ result for an unchanged item may legitimately differ. One parameter rules both
 out.
 
 Callbacks with *selections* (0002: a captured value used only as an operand of
-`===`/`!==`, rewritten to `listItemCache.is(...)`) take the existing
+`===`/`!==`, rewritten to `listItemCache.matchesSelection(...)`) take the existing
 `listItemCache.map(items, callback, [selections])` path instead; the two
 mechanisms are exclusive today.
 

@@ -24,6 +24,12 @@
 //! imports, after the import, and the hooks it defines with `const useX =
 //! create(...)`, after the declaration. React also checks that a registered
 //! hook's call read exactly one store and returned its snapshot.
+//!
+//! With `enableSelectorReads`, a hook defined with `create` is registered with
+//! its store's state getter (`unstable_registerStoreHook(useX,
+//! useX.getState)`): the hook returns its selector argument applied to that
+//! state, so React can skip checking calls whose selectors read no key of the
+//! state that changed.
 
 use react_compiler_ast::Program;
 use react_compiler_ast::common::BaseNode;
@@ -53,9 +59,17 @@ fn is_listed(list: &[(&str, &str)], source: &str, imported: &str) -> bool {
         .any(|(module, name)| *module == source && *name == imported)
 }
 
-/// The store hooks of a module: indices of the top-level statements after
-/// which to register each hook, by local name.
-fn find_store_hooks(program: &Program) -> Vec<(usize, String)> {
+/// A store hook of a module: the index of the top-level statement after which
+/// to register it, its local name, and whether the module defines it with
+/// `create` (so that its state getter is `useX.getState`).
+struct StoreHook {
+    index: usize,
+    name: String,
+    created: bool,
+}
+
+/// The store hooks of a module.
+fn find_store_hooks(program: &Program) -> Vec<StoreHook> {
     let mut factories: Vec<String> = Vec::new();
     let mut hooks = Vec::new();
     for (index, statement) in program.body.iter().enumerate() {
@@ -88,7 +102,11 @@ fn find_store_hooks(program: &Program) -> Vec<(usize, String)> {
                         },
                     };
                     if is_listed(STORE_HOOKS, source, imported) {
-                        hooks.push((index, data.local.name.clone()));
+                        hooks.push(StoreHook {
+                            index,
+                            name: data.local.name.clone(),
+                            created: false,
+                        });
                     } else if is_listed(STORE_HOOK_FACTORIES, source, imported) {
                         factories.push(data.local.name.clone());
                     }
@@ -114,7 +132,11 @@ fn find_store_hooks(program: &Program) -> Vec<(usize, String)> {
             }
             if let Some(init) = &declarator.init {
                 if creates_store_hook(init, &factories) {
-                    hooks.push((index, id.name.clone()));
+                    hooks.push(StoreHook {
+                        index,
+                        name: id.name.clone(),
+                        created: true,
+                    });
                 }
             }
         }
@@ -143,8 +165,14 @@ fn creates_store_hook(expression: &Expression, factories: &[String]) -> bool {
 }
 
 /// Adds `unstable_registerStoreHook(useX)` after the import or declaration of
-/// each store hook of the module. Returns whether anything was added.
-pub fn register_store_hooks(program: &mut Program, context: &mut ProgramContext) -> bool {
+/// each store hook of the module, with `useX.getState` as the second argument
+/// for hooks defined with `create` if `with_state_getters`. Returns whether
+/// anything was added.
+pub fn register_store_hooks(
+    program: &mut Program,
+    context: &mut ProgramContext,
+    with_state_getters: bool,
+) -> bool {
     let hooks = find_store_hooks(program);
     if hooks.is_empty() {
         return false;
@@ -153,28 +181,37 @@ pub fn register_store_hooks(program: &mut Program, context: &mut ProgramContext)
     let register = context
         .add_import_specifier(&module, "unstable_registerStoreHook", None)
         .name;
+    let identifier = |name: String| Identifier {
+        base: BaseNode::typed("Identifier"),
+        name,
+        type_annotation: None,
+        optional: None,
+        decorators: None,
+    };
     // Insert from the last statement so that earlier indices stay valid; the
     // registrations after one statement keep their order.
-    for (index, name) in hooks.into_iter().rev() {
-        let identifier = |name: String| Identifier {
-            base: BaseNode::typed("Identifier"),
-            name,
-            type_annotation: None,
-            optional: None,
-            decorators: None,
-        };
+    for hook in hooks.into_iter().rev() {
+        let mut arguments = vec![Expression::Identifier(identifier(hook.name.clone()))];
+        if with_state_getters && hook.created {
+            arguments.push(Expression::MemberExpression(MemberExpression {
+                base: BaseNode::typed("MemberExpression"),
+                object: Box::new(Expression::Identifier(identifier(hook.name))),
+                property: Box::new(Expression::Identifier(identifier("getState".to_string()))),
+                computed: false,
+            }));
+        }
         let statement = Statement::ExpressionStatement(ExpressionStatement {
             base: BaseNode::typed("ExpressionStatement"),
             expression: Box::new(Expression::CallExpression(CallExpression {
                 base: BaseNode::typed("CallExpression"),
                 callee: Box::new(Expression::Identifier(identifier(register.clone()))),
-                arguments: vec![Expression::Identifier(identifier(name))],
+                arguments,
                 type_parameters: None,
                 type_arguments: None,
                 optional: None,
             })),
         });
-        program.body.insert(index + 1, statement);
+        program.body.insert(hook.index + 1, statement);
     }
     true
 }

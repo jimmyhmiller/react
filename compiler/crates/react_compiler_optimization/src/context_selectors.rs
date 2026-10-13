@@ -54,6 +54,16 @@
 //! and the call read exactly one `useSyncExternalStore` and returned its
 //! snapshot. `const selectedId = useStore(s => s.selectedId); selectedId ===
 //! id` is described as `[[1, id]]`.
+//!
+//! Selector reads (`enableSelectorReads`). When the first argument of a custom
+//! hook call is an inline function whose first parameter (the store's state)
+//! is only read through static property loads and destructuring, the call is
+//! made through the runtime with the top-level keys it reads:
+//! `useStore(s => s.rows[id])` passes `["rows"]` to
+//! `unstable_selectHookPaths`, even if the returned value is not selected.
+//! React uses the keys for store hooks registered with a state getter, which
+//! promise that their snapshot is their first argument applied to the state:
+//! a store change only checks the calls that read a changed key.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -93,6 +103,7 @@ pub fn select_context_reads(
     env: &mut Environment,
     imports: &mut dyn ContextSelectorImports,
     update_slicing: bool,
+    selector_reads_enabled: bool,
 ) -> usize {
     if !matches!(
         func.fn_type,
@@ -111,14 +122,29 @@ pub fn select_context_reads(
     let mut plans = Vec::new();
     for site in sites {
         let entries = analyze(func, env, &index, &site);
-        let sliced = update_slicing && site.kind == SiteKind::Hook && site.argument_count <= MAX_SLICED_HOOK_ARGUMENTS;
-        if entries.is_some() || sliced {
-            plans.push((site, entries, sliced));
+        let sliced = update_slicing
+            && site.kind == SiteKind::Hook
+            && site.argument_count <= MAX_SLICED_HOOK_ARGUMENTS;
+        let reads = if selector_reads_enabled && site.kind == SiteKind::Hook {
+            selector_reads(func, env, &index, &site)
+        } else {
+            None
+        };
+        if entries.is_some() || sliced || reads.is_some() {
+            plans.push((site, entries, sliced, reads));
         }
     }
     let count = plans.len();
-    for (site, entries, sliced) in plans {
-        rewrite(func, env, imports, &site, entries.as_deref(), sliced);
+    for (site, entries, sliced, reads) in plans {
+        rewrite(
+            func,
+            env,
+            imports,
+            &site,
+            entries.as_deref(),
+            sliced,
+            reads.as_deref(),
+        );
     }
     if count > 0 {
         mark_instruction_ids(&mut func.body, &mut func.instructions);
@@ -144,11 +170,8 @@ pub fn is_context_identity_hook(func: &HirFunction, env: &Environment) -> bool {
                     args,
                     ..
                 } => match hook_kind(env, callee.identifier) {
-                    Some(HookKind::UseContext)
-                        if context_value.is_none()
-                            && matches!(&instr.value, InstructionValue::CallExpression { .. })
-                            && args.len() == 1 =>
-                    {
+                    // `useContext(Ctx)` or `React.useContext(Ctx)`.
+                    Some(HookKind::UseContext) if context_value.is_none() && args.len() == 1 => {
                         context_value = Some(instr.lvalue.identifier);
                     }
                     Some(_) => return false,
@@ -678,6 +701,136 @@ fn analyze(
     Some(result)
 }
 
+/// The top-level keys of the store state that the selector passed as the first
+/// argument of a custom hook call reads (see "Selector reads" above), or None
+/// if the argument is not an inline function or reads its first parameter in
+/// another way (passes it on, returns it, reads a computed key, captures it in
+/// a nested function...).
+fn selector_reads(
+    func: &HirFunction,
+    env: &Environment,
+    index: &FunctionIndex,
+    site: &Site,
+) -> Option<Vec<PropertyLiteral>> {
+    let InstructionValue::CallExpression { args, .. } =
+        &func.instructions[site.instruction.0 as usize].value
+    else {
+        return None;
+    };
+    let Some(PlaceOrSpread::Place(argument)) = args.first() else {
+        return None;
+    };
+    let selector = selector_function(func, index, argument.identifier, 0)?;
+    let selector_func = &env.functions[selector.0 as usize];
+    if selector_func.is_async || selector_func.generator {
+        return None;
+    }
+    let state = match selector_func.params.first() {
+        // A selector without parameters reads no key.
+        None => return Some(Vec::new()),
+        Some(ParamPattern::Place(place)) => place.identifier,
+        Some(ParamPattern::Spread(_)) => return None,
+    };
+    let mut keys: Vec<PropertyLiteral> = Vec::new();
+    let mut add_key = |key: PropertyLiteral| {
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    };
+    // The state and the locals holding it.
+    let mut aliases: FxHashSet<IdentifierId> = FxHashSet::default();
+    aliases.insert(state);
+    let mut worklist = vec![state];
+    while let Some(id) = worklist.pop() {
+        let uses = index.uses.get(&id).map(Vec::as_slice).unwrap_or_default();
+        for use_site in uses {
+            let UseSite::Instruction(Some(owner), instr_id) = *use_site else {
+                return None;
+            };
+            if owner != selector {
+                return None;
+            }
+            let instr = &selector_func.instructions[instr_id.0 as usize];
+            let alias = match &instr.value {
+                InstructionValue::LoadLocal { place, .. } if place.identifier == id => {
+                    instr.lvalue.identifier
+                }
+                InstructionValue::TypeCastExpression { value, .. } if value.identifier == id => {
+                    instr.lvalue.identifier
+                }
+                InstructionValue::StoreLocal { lvalue, value, .. }
+                    if value.identifier == id && lvalue.kind != InstructionKind::Reassign =>
+                {
+                    lvalue.place.identifier
+                }
+                InstructionValue::PropertyLoad {
+                    object, property, ..
+                } if object.identifier == id => {
+                    add_key(property.clone());
+                    continue;
+                }
+                InstructionValue::Destructure { lvalue, value, .. }
+                    if value.identifier == id && lvalue.kind != InstructionKind::Reassign =>
+                {
+                    let Pattern::Object(pattern) = &lvalue.pattern else {
+                        return None;
+                    };
+                    for property in &pattern.properties {
+                        let ObjectPropertyOrSpread::Property(property) = property else {
+                            return None;
+                        };
+                        if property.property_type != ObjectPropertyType::Property {
+                            return None;
+                        }
+                        match &property.key {
+                            ObjectPropertyKey::String { name }
+                            | ObjectPropertyKey::Identifier { name } => {
+                                add_key(PropertyLiteral::String(name.clone()))
+                            }
+                            ObjectPropertyKey::Number { name } => {
+                                add_key(PropertyLiteral::Number(*name))
+                            }
+                            ObjectPropertyKey::Computed { .. } => return None,
+                        }
+                    }
+                    continue;
+                }
+                _ => return None,
+            };
+            if aliases.insert(alias) {
+                worklist.push(alias);
+            }
+        }
+    }
+    Some(keys)
+}
+
+/// The function expression of the component that `id` holds, followed through
+/// loads and `const` declarations.
+fn selector_function(
+    func: &HirFunction,
+    index: &FunctionIndex,
+    id: IdentifierId,
+    depth: usize,
+) -> Option<FunctionId> {
+    if depth > 8 {
+        return None;
+    }
+    let &(def, _) = index.defs.get(&id)?;
+    match &func.instructions[def.0 as usize].value {
+        InstructionValue::FunctionExpression { lowered_func, .. } => Some(lowered_func.func),
+        InstructionValue::LoadLocal { place, .. } => {
+            selector_function(func, index, place.identifier, depth + 1)
+        }
+        InstructionValue::StoreLocal { lvalue, value, .. }
+            if lvalue.place.identifier == id && lvalue.kind == InstructionKind::Const =>
+        {
+            selector_function(func, index, value.identifier, depth + 1)
+        }
+        _ => None,
+    }
+}
+
 fn expr_depends_on(expr: &Expr, paths: &FxHashMap<IdentifierId, Vec<Key>>) -> bool {
     match expr {
         Expr::Available(id) => paths.contains_key(id),
@@ -806,6 +959,7 @@ fn rewrite(
     site: &Site,
     entries: Option<&[Entry]>,
     sliced: bool,
+    reads: Option<&[PropertyLiteral]>,
 ) {
     let mut before: Vec<InstructionId> = Vec::new();
     let mut descriptor: Vec<Place> = Vec::new();
@@ -923,7 +1077,8 @@ fn rewrite(
                 let skip = imports.skip_store_hook(site.argument_count);
                 let skip_callee = load_global(func, env, &mut before, skip, hook_type.clone());
                 let skipped = temporary(env, Type::Poly);
-                let skipped_name = env.generate_globally_unique_identifier_name(Some("skippedHook"));
+                let skipped_name =
+                    env.generate_globally_unique_identifier_name(Some("skippedHook"));
                 env.identifiers[skipped.identifier.0 as usize].name =
                     Some(react_compiler_hir::IdentifierName::Named(skipped_name));
                 let (hook_args, callee_id) = {
@@ -957,6 +1112,32 @@ fn rewrite(
                 args.push(PlaceOrSpread::Place(skipped));
                 env.add_sliced_hook_callee(callee_id);
             }
+            let mut select_args = vec![
+                PlaceOrSpread::Place(snapshot),
+                PlaceOrSpread::Place(Place {
+                    identifier: site.value,
+                    effect: react_compiler_hir::Effect::Unknown,
+                    reactive: false,
+                    loc: None,
+                }),
+                PlaceOrSpread::Place(hook),
+                PlaceOrSpread::Place(descriptor),
+            ];
+            if let Some(reads) = reads {
+                let keys = reads
+                    .iter()
+                    .map(|key| {
+                        let value = match key {
+                            PropertyLiteral::String(name) => {
+                                PrimitiveValue::String(name.clone().into())
+                            }
+                            PropertyLiteral::Number(number) => PrimitiveValue::Number(*number),
+                        };
+                        primitive(func, env, &mut before, value)
+                    })
+                    .collect();
+                select_args.push(PlaceOrSpread::Place(array(func, env, &mut before, keys)));
+            }
             let select = imports.select_hook_paths();
             let select_callee = load_global(func, env, &mut after, select, hook_type);
             let result = temporary(env, Type::Poly);
@@ -966,17 +1147,7 @@ fn rewrite(
                 result,
                 InstructionValue::CallExpression {
                     callee: select_callee,
-                    args: vec![
-                        PlaceOrSpread::Place(snapshot),
-                        PlaceOrSpread::Place(Place {
-                            identifier: site.value,
-                            effect: react_compiler_hir::Effect::Unknown,
-                            reactive: false,
-                            loc: None,
-                        }),
-                        PlaceOrSpread::Place(hook),
-                        PlaceOrSpread::Place(descriptor),
-                    ],
+                    args: select_args,
                     loc: None,
                 },
             );

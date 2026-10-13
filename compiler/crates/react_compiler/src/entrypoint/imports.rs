@@ -71,6 +71,12 @@ pub struct ProgramContext {
     /// The static components of the module (see `WrapStaticIslands`).
     pub static_components: react_compiler_optimization::static_islands::StaticComponents,
 
+    /// Whether the function being compiled has state variables (see
+    /// `LowerStateVariables`). Such a function is only correct when compiled,
+    /// so it cannot be skipped: every error is fatal, whatever the
+    /// `panicThreshold`, and so is opting out of compilation.
+    pub has_state_variables: bool,
+
     /// Whether debug logging is enabled (HIR formatting after each pass).
     pub debug_enabled: bool,
 
@@ -119,6 +125,7 @@ impl ProgramContext {
             renames: Vec::new(),
             timing: TimingData::new(profiling),
             static_components: FxHashMap::default(),
+            has_state_variables: false,
             debug_enabled,
             already_compiled: FxHashSet::default(),
             known_referenced_names: FxHashSet::default(),

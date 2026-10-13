@@ -42,11 +42,11 @@ use react_compiler_hir::block_template::ReturnsBlock;
 use react_compiler_hir::environment::{Environment, is_hook_name};
 use react_compiler_hir::visitors;
 use react_compiler_hir::{
-    BasicBlock, BlockId, BlockKind, EvaluationOrder, GENERATED_SOURCE, GotoVariant,
-    HirFunction, IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind,
-    InstructionValue, JsxAttribute, JsxTag, LValue, NonLocalBinding, ObjectProperty,
-    ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern, Pattern, Place,
-    PrimitiveValue, PropertyLiteral, ReactFunctionType, Terminal,
+    BasicBlock, BlockId, BlockKind, EvaluationOrder, GENERATED_SOURCE, GotoVariant, HirFunction,
+    IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue,
+    JsxAttribute, JsxTag, LValue, NonLocalBinding, ObjectProperty, ObjectPropertyKey,
+    ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern, Pattern, Place, PrimitiveValue,
+    PropertyLiteral, ReactFunctionType, Terminal,
 };
 use react_compiler_lowering::{
     FunctionNode, create_temporary_place, get_reverse_postordered_blocks, mark_instruction_ids,
@@ -168,6 +168,14 @@ pub fn summarize_callee(
     if function_calls_hook(func, env) {
         return Err(NotInlinableReason::CallsHook);
     }
+    // A state variable is a `useState` call once the callee is compiled (see
+    // `LowerStateVariables`). Whether a candidate is one depends on an
+    // analysis that has not run on this HIR, so every candidate counts.
+    if env.config.enable_state_variables
+        && crate::state_variables::has_state_variable_candidates(func, env)
+    {
+        return Err(NotInlinableReason::CallsHook);
+    }
 
     let flow = FlowIndex::build(func, env);
     let mut returned_jsx: Vec<InstructionId> = Vec::new();
@@ -221,9 +229,9 @@ pub fn summarize_callee(
     let can_transfer_key = returned_jsx.iter().all(|instr_id| {
         let instr = &func.instructions[instr_id.0 as usize];
         let has_key = match &instr.value {
-            InstructionValue::JsxExpression { props, .. } => props.iter().any(
-                |attr| matches!(attr, JsxAttribute::Attribute { name, .. } if name == "key"),
-            ),
+            InstructionValue::JsxExpression { props, .. } => props
+                .iter()
+                .any(|attr| matches!(attr, JsxAttribute::Attribute { name, .. } if name == "key")),
             _ => true,
         };
         !has_key && flow.flows_only_to_return(func, instr.lvalue.identifier)
@@ -240,11 +248,7 @@ pub fn summarize_callee(
                 })
             })
             .is_some_and(|children| {
-                flow.is_rendered(
-                    func,
-                    children.identifier,
-                    &mut FxHashSet::default(),
-                )
+                flow.is_rendered(func, children.identifier, &mut FxHashSet::default())
             }),
         _ => false,
     };
@@ -285,7 +289,13 @@ pub fn inline_components(
         list_item_memoization: env.config.enable_jsx_blocks
             && env.config.enable_list_item_memoization,
     };
-    inline_in_function(func, env, &mut cx, ReturnFlow::Rendered, Rc::new(Vec::new()))?;
+    inline_in_function(
+        func,
+        env,
+        &mut cx,
+        ReturnFlow::Rendered,
+        Rc::new(Vec::new()),
+    )?;
     Ok(cx.inlined_sites)
 }
 
@@ -357,13 +367,7 @@ fn inline_in_function(
             &mut env.functions[func_id.0 as usize],
             react_compiler_ssa::enter_ssa::placeholder_function(),
         );
-        let result = inline_in_function(
-            &mut inner,
-            env,
-            cx,
-            ReturnFlow::RenderedListItem,
-            origin,
-        );
+        let result = inline_in_function(&mut inner, env, cx, ReturnFlow::RenderedListItem, origin);
         env.functions[func_id.0 as usize] = inner;
         result?;
     }
@@ -466,7 +470,7 @@ impl FlowIndex {
         &self,
         func: &HirFunction,
         id: IdentifierId,
-            visiting: &mut FxHashSet<IdentifierId>,
+        visiting: &mut FxHashSet<IdentifierId>,
     ) -> bool {
         if !visiting.insert(id) {
             return false;
@@ -485,13 +489,11 @@ impl FlowIndex {
         func: &HirFunction,
         id: IdentifierId,
         use_: Use,
-            visiting: &mut FxHashSet<IdentifierId>,
+        visiting: &mut FxHashSet<IdentifierId>,
     ) -> bool {
         match use_ {
             Use::Terminal(block_id) => match &func.body.blocks[&block_id].terminal {
-                Terminal::Return { value, .. } => {
-                    value.identifier == id
-                }
+                Terminal::Return { value, .. } => value.identifier == id,
                 _ => false,
             },
             Use::Instruction(instr_id) => {
@@ -505,20 +507,14 @@ impl FlowIndex {
                     } if !NON_RENDERING_HOST_TAGS.contains(&tag.name.as_str()) => {
                         let in_props = props.iter().any(|attr| match attr {
                             JsxAttribute::Attribute { place, .. } => place.identifier == id,
-                            JsxAttribute::SpreadAttribute { argument } => {
-                                argument.identifier == id
-                            }
+                            JsxAttribute::SpreadAttribute { argument } => argument.identifier == id,
                         });
                         let in_children = children
                             .as_ref()
                             .is_some_and(|c| c.iter().any(|p| p.identifier == id));
                         !in_props
                             && in_children
-                            && self.is_rendered(
-                                func,
-                                instr.lvalue.identifier,
-                                visiting,
-                            )
+                            && self.is_rendered(func, instr.lvalue.identifier, visiting)
                     }
                     InstructionValue::JsxFragment { .. } => {
                         self.is_rendered(func, instr.lvalue.identifier, visiting)
@@ -549,13 +545,18 @@ impl FlowIndex {
         &self,
         func: &HirFunction,
         target: IdentifierId,
-            visiting: &mut FxHashSet<IdentifierId>,
+        visiting: &mut FxHashSet<IdentifierId>,
     ) -> bool {
         if self.other_defs.contains(&target) {
             return false;
         }
         let mut non_primitive_stores = 0;
-        for store_id in self.store_defs.get(&target).map(|v| v.as_slice()).unwrap_or(&[]) {
+        for store_id in self
+            .store_defs
+            .get(&target)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+        {
             match &func.instructions[store_id.0 as usize].value {
                 InstructionValue::DeclareLocal { .. } => {}
                 InstructionValue::StoreLocal { value, .. } => {
@@ -587,8 +588,16 @@ impl FlowIndex {
         if self.other_defs.contains(&id) {
             return false;
         }
-        let value_defs = self.value_defs.get(&id).map(|v| v.as_slice()).unwrap_or(&[]);
-        let store_defs = self.store_defs.get(&id).map(|v| v.as_slice()).unwrap_or(&[]);
+        let value_defs = self
+            .value_defs
+            .get(&id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let store_defs = self
+            .store_defs
+            .get(&id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         if value_defs.is_empty() && store_defs.is_empty() {
             return false;
         }
@@ -643,8 +652,16 @@ impl FlowIndex {
         if self.other_defs.contains(&id) {
             return false;
         }
-        let value_defs = self.value_defs.get(&id).map(|v| v.as_slice()).unwrap_or(&[]);
-        let store_defs = self.store_defs.get(&id).map(|v| v.as_slice()).unwrap_or(&[]);
+        let value_defs = self
+            .value_defs
+            .get(&id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let store_defs = self
+            .store_defs
+            .get(&id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         if value_defs.is_empty() && store_defs.is_empty() {
             return false;
         }
@@ -714,8 +731,9 @@ impl FlowIndex {
                     InstructionValue::LoadLocal { .. } => {
                         self.flows_without_jsx_containers(func, instr.lvalue.identifier, visiting)
                     }
-                    InstructionValue::StoreLocal { lvalue, .. } => self
-                        .flows_without_jsx_containers(func, lvalue.place.identifier, visiting),
+                    InstructionValue::StoreLocal { lvalue, .. } => {
+                        self.flows_without_jsx_containers(func, lvalue.place.identifier, visiting)
+                    }
                     _ => false,
                 }
             }
@@ -739,23 +757,30 @@ impl FlowIndex {
         if arg.identifier != callback {
             return false;
         }
-        let is_map = self.value_defs.get(&property.identifier).is_some_and(|defs| {
-            matches!(
-                defs.as_slice(),
-                [def] if matches!(
-                    &func.instructions[def.0 as usize].value,
-                    InstructionValue::PropertyLoad {
-                        property: PropertyLiteral::String(name),
-                        ..
-                    } if name == "map"
+        let is_map = self
+            .value_defs
+            .get(&property.identifier)
+            .is_some_and(|defs| {
+                matches!(
+                    defs.as_slice(),
+                    [def] if matches!(
+                        &func.instructions[def.0 as usize].value,
+                        InstructionValue::PropertyLoad {
+                            property: PropertyLiteral::String(name),
+                            ..
+                        } if name == "map"
+                    )
                 )
-            )
-        });
+            });
         is_map && self.is_rendered(func, call.lvalue.identifier, &mut FxHashSet::default())
     }
 
     /// Resolves a JSX tag place to the module-local binding name it loads.
-    fn module_local_tag_name<'f>(&self, func: &'f HirFunction, id: IdentifierId) -> Option<&'f str> {
+    fn module_local_tag_name<'f>(
+        &self,
+        func: &'f HirFunction,
+        id: IdentifierId,
+    ) -> Option<&'f str> {
         let defs = self.value_defs.get(&id)?;
         let [def] = defs.as_slice() else {
             return None;
@@ -825,8 +850,16 @@ fn place_may_be_hook(
     if !visiting.insert(id) {
         return false;
     }
-    let value_defs = flow.value_defs.get(&id).map(|v| v.as_slice()).unwrap_or(&[]);
-    let store_defs = flow.store_defs.get(&id).map(|v| v.as_slice()).unwrap_or(&[]);
+    let value_defs = flow
+        .value_defs
+        .get(&id)
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+    let store_defs = flow
+        .store_defs
+        .get(&id)
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
     for def in value_defs.iter().chain(store_defs.iter()) {
         let may_be_hook = match &func.instructions[def.0 as usize].value {
             InstructionValue::LoadGlobal { binding, .. } => {
@@ -960,11 +993,7 @@ fn find_site(
                 continue;
             }
             // Rule S4.
-            if !flow.is_rendered(
-                func,
-                instr.lvalue.identifier,
-                &mut FxHashSet::default(),
-            ) {
+            if !flow.is_rendered(func, instr.lvalue.identifier, &mut FxHashSet::default()) {
                 continue;
             }
             return Some(Site {
@@ -1009,12 +1038,8 @@ fn splice_site(
     // verified that the callee compiles without errors, so any new error here
     // is a compiler bug.
     let errors_before = env.error_count();
-    let mut callee = react_compiler_lowering::lower(
-        &candidate.node,
-        Some(&site.component),
-        cx.scope_info,
-        env,
-    )?;
+    let mut callee =
+        react_compiler_lowering::lower(&candidate.node, Some(&site.component), cx.scope_info, env)?;
     if env.error_count() != errors_before {
         return Err(invariant(
             "InlineComponents: lowering a verified candidate recorded new errors",
@@ -1319,10 +1344,13 @@ fn splice_into_value_block(
             block.kind = site_block_kind;
         }
         if let Terminal::Return {
-            value, loc: return_loc, ..
+            value,
+            loc: return_loc,
+            ..
         } = &block.terminal
         {
-            let result_id = push_instruction(func, load_result(site, value.clone(), return_loc.clone()));
+            let result_id =
+                push_instruction(func, load_result(site, value.clone(), return_loc.clone()));
             origins.insert(result_id, callee_origin.clone());
             block.instructions.push(result_id);
             block.instructions.append(&mut continuation_instructions);
@@ -1334,8 +1362,8 @@ fn splice_into_value_block(
             other_blocks.push(block);
         }
     }
-    let entry_block = entry_block
-        .ok_or_else(|| invariant("InlineComponents: callee has no entry block"))?;
+    let entry_block =
+        entry_block.ok_or_else(|| invariant("InlineComponents: callee has no entry block"))?;
 
     // Merge the callee entry block into the site block.
     let site_block = func.body.blocks.get_mut(&site.block_id).unwrap();
@@ -1458,7 +1486,16 @@ fn bind_parameters(
                         }
                     };
                     bound_names.insert(name);
-                    bind(callee, env, &mut instructions, mode, kind, place, value, site)?;
+                    bind(
+                        callee,
+                        env,
+                        &mut instructions,
+                        mode,
+                        kind,
+                        place,
+                        value,
+                        site,
+                    )?;
                 }
                 DestructuredProperty::Rest { place } => {
                     let remaining: Vec<(String, Place)> = props
@@ -1467,7 +1504,16 @@ fn bind_parameters(
                         .cloned()
                         .collect();
                     let object = object_expression(env, &mut instructions, remaining, site);
-                    bind(callee, env, &mut instructions, mode, kind, place, object, site)?;
+                    bind(
+                        callee,
+                        env,
+                        &mut instructions,
+                        mode,
+                        kind,
+                        place,
+                        object,
+                        site,
+                    )?;
                 }
             }
         }
@@ -1529,8 +1575,7 @@ fn bind(
 fn is_value_site_bindable(func: &HirFunction, env: &Environment, flow: &FlowIndex) -> bool {
     let destructure = match func.params.as_slice() {
         [] => None,
-        [ParamPattern::Place(param)] => match find_param_destructure(func, env, param.identifier)
-        {
+        [ParamPattern::Place(param)] => match find_param_destructure(func, env, param.identifier) {
             Some(destructure) => Some(destructure),
             None => return false,
         },
@@ -1543,9 +1588,8 @@ fn is_value_site_bindable(func: &HirFunction, env: &Environment, flow: &FlowInde
     if let Some((_, _, properties)) = &destructure {
         for property in properties {
             let place = match property {
-                DestructuredProperty::Named { place, .. } | DestructuredProperty::Rest { place } => {
-                    place
-                }
+                DestructuredProperty::Named { place, .. }
+                | DestructuredProperty::Rest { place } => place,
             };
             if flow.store_defs.contains_key(&place.identifier)
                 || flow.value_defs.contains_key(&place.identifier)

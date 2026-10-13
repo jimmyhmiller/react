@@ -59,12 +59,11 @@ use super::compile_result::LoggerSourceLocation;
 use super::compile_result::LoggerSuggestionInfo;
 use super::compile_result::LoggerSuggestionOp;
 use super::compile_result::OrderedLogItem;
-use react_compiler_hir::block_template::ReturnsBlock;
 use super::imports::ProgramContext;
-use super::inline_candidates;
 use super::imports::add_imports_to_program;
 use super::imports::get_react_compiler_runtime_module;
 use super::imports::validate_restricted_imports;
+use super::inline_candidates;
 use super::pipeline;
 use super::plugin_options::CompilerOutputMode;
 use super::plugin_options::GatingConfig;
@@ -73,6 +72,7 @@ use super::suppression::SuppressionRange;
 use super::suppression::filter_suppressions_that_affect_function;
 use super::suppression::find_program_suppressions;
 use super::suppression::suppressions_to_compiler_error;
+use react_compiler_hir::block_template::ReturnsBlock;
 
 // -----------------------------------------------------------------------
 // Constants
@@ -1392,11 +1392,14 @@ fn handle_error(
     // Log the error
     log_error(err, fn_ast_loc, context);
 
-    let should_panic = match context.opts.panic_threshold.as_str() {
-        "all_errors" => true,
-        "critical_errors" => err.has_errors(),
-        _ => false,
-    };
+    // A function with state variables is only correct when compiled, so it
+    // cannot be skipped (see `LowerStateVariables`).
+    let should_panic = context.has_state_variables
+        || match context.opts.panic_threshold.as_str() {
+            "all_errors" => true,
+            "critical_errors" => err.has_errors(),
+            _ => false,
+        };
 
     // Config errors always cause a panic
     let is_config_error = err.details.iter().any(|d| match d {
@@ -1563,9 +1566,7 @@ fn try_compile_function(
             context,
         );
         let error = match result {
-            Err(error)
-                if memoized_lists > 0 || inlined_sites > 0 || selected_context_reads > 0 =>
-            {
+            Err(error) if memoized_lists > 0 || inlined_sites > 0 || selected_context_reads > 0 => {
                 error
             }
             result => return result,
@@ -1682,7 +1683,14 @@ fn collect_inline_candidates<'a>(
         );
     }
     if env_config.enable_jsx_blocks {
-        compute_leaf_blocks(&mut candidates, &accepted, scope, output_mode, env_config, context);
+        compute_leaf_blocks(
+            &mut candidates,
+            &accepted,
+            scope,
+            output_mode,
+            env_config,
+            context,
+        );
     }
     for (name, _) in &accepted {
         let returns_block = candidates
@@ -1719,16 +1727,22 @@ fn collect_static_components(
     for component in inline_candidates::find_module_components(program, scope) {
         let mut scratch = Environment::with_config(env_config.clone());
         scratch.fn_type = ReactFunctionType::Component;
-        if let Ok(hir) =
-            react_compiler_lowering::lower(&component.node, Some(&component.name), scope, &mut scratch)
-        {
+        if let Ok(hir) = react_compiler_lowering::lower(
+            &component.node,
+            Some(&component.name),
+            scope,
+            &mut scratch,
+        ) {
             if !scratch.has_errors() {
                 lowered.push((component.name, hir, scratch));
             }
         }
     }
     let mut static_components: react_compiler_optimization::static_islands::StaticComponents =
-        lowered.iter().map(|(name, _, _)| (name.clone(), 1)).collect();
+        lowered
+            .iter()
+            .map(|(name, _, _)| (name.clone(), 1))
+            .collect();
     loop {
         let removed: Vec<String> = lowered
             .iter()
@@ -1796,14 +1810,8 @@ fn compute_leaf_blocks<'a>(
                 continue;
             }
             let checkpoint = context.checkpoint();
-            let compiled = try_compile_function(
-                source,
-                scope,
-                output_mode,
-                env_config,
-                candidates,
-                context,
-            );
+            let compiled =
+                try_compile_function(source, scope, output_mode, env_config, candidates, context);
             context.rollback(checkpoint);
             if let Ok(compiled) = compiled {
                 if compiled.returns_block > current {
@@ -1851,6 +1859,7 @@ fn process_fn(
     };
 
     // Attempt compilation
+    context.has_state_variables = false;
     let compile_result = try_compile_function(
         source,
         scope_info,
@@ -1859,6 +1868,51 @@ fn process_fn(
         inline_candidates,
         context,
     );
+
+    // A function with state variables is only correct when compiled, so it
+    // cannot opt out of compilation.
+    let compile_result = match compile_result {
+        Ok(codegen_fn) if context.has_state_variables => {
+            let skipped_by = if !context.opts.ignore_use_no_forget && opt_out.is_some() {
+                Some(format!("the '{}' directive", opt_out.unwrap().value.value))
+            } else if context.has_module_scope_opt_out {
+                Some("a module level opt-out directive".to_string())
+            } else if context.opts.compilation_mode == "annotation" && opt_in.is_none() {
+                Some("the 'annotation' compilation mode".to_string())
+            } else if context.opts.gating.is_some()
+                || matches!(
+                    find_directives_dynamic_gating(&source.body_directives, &context.opts),
+                    Ok(Some(_))
+                )
+            {
+                // Gating keeps the function as it was written for when the
+                // gate is off.
+                Some("gating, which keeps the uncompiled function as a fallback,".to_string())
+            } else {
+                None
+            };
+            match skipped_by {
+                Some(skipped_by) => {
+                    let mut err = CompilerError::new();
+                    err.push_error_detail(CompilerErrorDetail {
+                        category: ErrorCategory::Immutability,
+                        reason: "Cannot skip the compilation of a function with state variables"
+                            .to_string(),
+                        description: Some(format!(
+                            "This function reassigns a variable after render, which makes the \
+                             variable state. That only works when the function is compiled, but \
+                             {skipped_by} skips its compilation. Remove it, or use `useState`"
+                        )),
+                        loc: source.fn_loc.clone(),
+                        suggestions: None,
+                    });
+                    Err(err)
+                }
+                None => Ok(codegen_fn),
+            }
+        }
+        result => result,
+    };
 
     match compile_result {
         Err(err) => {
@@ -1876,7 +1930,7 @@ fn process_fn(
                 });
             }
 
-            if opt_out.is_some() {
+            if opt_out.is_some() && !context.has_state_variables {
                 // If there's an opt-out, just log the error (don't escalate)
                 log_error(&err, source.fn_ast_loc.as_ref(), context);
             } else {
@@ -2052,11 +2106,34 @@ fn fn_info_from_arrow<'a>(
     }
 }
 
+/// With `enableStateVariables`, a function named like a hook whose nested
+/// functions reassign its variables is a hook, even though it calls no other
+/// hook and creates no JSX (which is how the 'infer' mode recognizes a hook):
+/// such a variable is state, so the function will call `useState` once
+/// compiled, and it is not correct unless it is compiled.
+fn state_variable_hook_type(
+    info: &FunctionInfo<'_>,
+    opts: &PluginOptions,
+    scope: &ScopeInfo,
+) -> Option<ReactFunctionType> {
+    if !opts.environment.enable_state_variables || opts.compilation_mode != "infer" {
+        return None;
+    }
+    let is_hook = info.name.as_deref().is_some_and(is_hook_name);
+    (is_hook
+        && react_compiler_lowering::find_context_identifiers::reassigns_own_variable_in_nested_function(
+            &info.fn_node,
+            scope,
+        ))
+    .then_some(ReactFunctionType::Hook)
+}
+
 /// Try to create a CompileSource from function info
 fn try_make_compile_source<'a>(
     info: FunctionInfo<'a>,
     opts: &PluginOptions,
     context: &mut ProgramContext,
+    scope: &ScopeInfo,
 ) -> Option<CompileSource<'a>> {
     // Skip if already compiled (identified by node_id)
     if let Some(nid) = info.base.node_id {
@@ -2075,7 +2152,8 @@ fn try_make_compile_source<'a>(
         opts,
         info.is_component_declaration,
         info.is_hook_declaration,
-    )?;
+    )
+    .or_else(|| state_variable_hook_type(&info, opts, scope))?;
 
     // Mark as compiled
     if let Some(nid) = info.base.node_id {
@@ -2130,6 +2208,7 @@ fn get_declarator_name(decl: &VariableDeclarator) -> Option<String> {
 struct FunctionDiscoveryVisitor<'a, 'ast> {
     opts: &'a PluginOptions,
     context: &'a mut ProgramContext,
+    scope: &'a ScopeInfo,
     queue: Vec<CompileSource<'ast>>,
     /// The inferred name from the current VariableDeclarator, if any.
     current_declarator_name: Option<String>,
@@ -2147,10 +2226,11 @@ struct FunctionDiscoveryVisitor<'a, 'ast> {
 }
 
 impl<'a, 'ast> FunctionDiscoveryVisitor<'a, 'ast> {
-    fn new(opts: &'a PluginOptions, context: &'a mut ProgramContext) -> Self {
+    fn new(opts: &'a PluginOptions, context: &'a mut ProgramContext, scope: &'a ScopeInfo) -> Self {
         Self {
             opts,
             context,
+            scope,
             queue: Vec::new(),
             current_declarator_name: None,
             parent_callee_stack: Vec::new(),
@@ -2259,7 +2339,7 @@ impl<'a, 'ast> Visitor<'ast> for FunctionDiscoveryVisitor<'a, 'ast> {
             return;
         }
         let info = fn_info_from_decl(node);
-        if let Some(source) = try_make_compile_source(info, self.opts, self.context) {
+        if let Some(source) = try_make_compile_source(info, self.opts, self.context, self.scope) {
             self.queue.push(source);
             self.skip_body = true;
         }
@@ -2280,7 +2360,7 @@ impl<'a, 'ast> Visitor<'ast> for FunctionDiscoveryVisitor<'a, 'ast> {
         let inferred_name = self.current_declarator_name.take();
         let parent_callee = self.current_parent_callee();
         let info = fn_info_from_func_expr(node, inferred_name, parent_callee);
-        if let Some(source) = try_make_compile_source(info, self.opts, self.context) {
+        if let Some(source) = try_make_compile_source(info, self.opts, self.context, self.scope) {
             self.queue.push(source);
             self.skip_body = true;
         }
@@ -2298,7 +2378,7 @@ impl<'a, 'ast> Visitor<'ast> for FunctionDiscoveryVisitor<'a, 'ast> {
         let inferred_name = self.current_declarator_name.take();
         let parent_callee = self.current_parent_callee();
         let info = fn_info_from_arrow(node, inferred_name, parent_callee);
-        if let Some(source) = try_make_compile_source(info, self.opts, self.context) {
+        if let Some(source) = try_make_compile_source(info, self.opts, self.context, self.scope) {
             self.queue.push(source);
             self.skip_body = true;
         }
@@ -2333,7 +2413,7 @@ fn find_functions_to_compile<'a>(
     context: &mut ProgramContext,
     scope: &ScopeInfo,
 ) -> Vec<CompileSource<'a>> {
-    let mut visitor = FunctionDiscoveryVisitor::new(opts, context);
+    let mut visitor = FunctionDiscoveryVisitor::new(opts, context, scope);
     let mut walker = AstWalker::new(scope);
     walker.walk_program(&mut visitor, program);
     visitor.queue
@@ -2948,8 +3028,17 @@ fn apply_compiled_functions(
 
         block_templates.append(&mut compiled.codegen_fn.block_templates);
         if compiled.codegen_fn.registers_context_hook && compiled.gating.is_none() {
-            if let (Some(node_id), Some(id)) = (fn_node_id, &compiled.codegen_fn.id) {
-                context_hooks.push((node_id, id.name.clone()));
+            if let Some(node_id) = fn_node_id {
+                // A function declaration is registered by its name; a function
+                // expression by the top-level `const` it initializes (an arrow
+                // function has no name of its own).
+                let name = match &compiled.codegen_fn.id {
+                    Some(id) => Some(id.name.clone()),
+                    None => const_binding_of_fn(program, node_id),
+                };
+                if let Some(name) = name {
+                    context_hooks.push((node_id, name));
+                }
             }
         }
 
@@ -3055,7 +3144,9 @@ fn apply_compiled_functions(
                 })),
             });
             if !insert_after_fn_recursive(&mut program.body, node_id, statement) {
-                panic!("SelectContextReads: the declaration of a registered context hook was not found");
+                panic!(
+                    "SelectContextReads: the declaration of a registered context hook was not found"
+                );
             }
         }
     }
@@ -3954,6 +4045,40 @@ fn stmt_has_fn_with_node_id(stmt: &Statement, node_id: u32) -> bool {
     }
 }
 
+/// The name of the top-level `const` whose initializer is the function
+/// expression or arrow function with `node_id` itself (not wrapped in a call),
+/// if there is one.
+fn const_binding_of_fn(program: &Program, node_id: u32) -> Option<String> {
+    for stmt in &program.body {
+        let declaration = match stmt {
+            Statement::VariableDeclaration(declaration) => declaration,
+            Statement::ExportNamedDeclaration(export) => match export.declaration.as_deref() {
+                Some(Declaration::VariableDeclaration(declaration)) => declaration,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        if !matches!(declaration.kind, VariableDeclarationKind::Const) {
+            continue;
+        }
+        for declarator in &declaration.declarations {
+            let (PatternLike::Identifier(id), Some(init)) = (&declarator.id, &declarator.init)
+            else {
+                continue;
+            };
+            let is_fn = match init.as_ref() {
+                Expression::FunctionExpression(f) => f.base.node_id == Some(node_id),
+                Expression::ArrowFunctionExpression(f) => f.base.node_id == Some(node_id),
+                _ => false,
+            };
+            if is_fn {
+                return Some(id.name.clone());
+            }
+        }
+    }
+    None
+}
+
 /// Check if an expression contains a function whose BaseNode.node_id matches.
 fn expr_has_fn_with_node_id(expr: &Expression, node_id: u32) -> bool {
     match expr {
@@ -4411,7 +4536,11 @@ pub fn compile_program(mut file: File, scope: ScopeInfo, options: PluginOptions)
     let registered_store_hooks = env_config.enable_context_selectors
         && output_mode == CompilerOutputMode::Client
         && context.react_runtime_module == "react/compiler-runtime"
-        && super::store_hooks::register_store_hooks(&mut file.program, &mut context);
+        && super::store_hooks::register_store_hooks(
+            &mut file.program,
+            &mut context,
+            env_config.enable_selector_reads,
+        );
 
     if replacements.is_empty() && registered_store_hooks {
         add_imports_to_program(&mut file.program, &context);

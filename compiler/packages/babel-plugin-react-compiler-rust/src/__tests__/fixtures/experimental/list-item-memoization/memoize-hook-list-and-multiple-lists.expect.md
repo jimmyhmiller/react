@@ -74,7 +74,7 @@ function Lists(t0) {
   if ($[0] !== _listItemCache) {
     t1 = (item) => {
       const t6 = item.id;
-      const t7 = _listItemCache.is(0, item.id) ? "on" : "";
+      const t7 = _listItemCache.matchesSelection(0, item.id) ? "on" : "";
       const t8 = item.label;
       const $0 = _listItemCache.next(6, t6);
       let t9;

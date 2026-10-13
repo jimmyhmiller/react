@@ -132,6 +132,16 @@ If props provably never change, the subtree never re-renders and its code
 could be split out of the client bundle: automatic partial hydration without
 manual Server Component boundaries.
 
+## 7. State variables (implemented)
+
+Not an optimization: a `let` that a function reassigns or mutates after render
+is state, so that `useState` does not have to be written. See
+0007-state-variables.md. It is here because of what it gives the ideas above: a
+state variable cannot escape the component the way a setter can, so the
+compiler sees every update of it, with its shape (an append, item `i`
+replaced). Ideas 3 and 4, and "list changes from updaters" below, need exactly
+that.
+
 ## Smaller ideas
 
 - **Effect-derived state.** `useEffect(() => setX(f(y)), [y])` costs an extra

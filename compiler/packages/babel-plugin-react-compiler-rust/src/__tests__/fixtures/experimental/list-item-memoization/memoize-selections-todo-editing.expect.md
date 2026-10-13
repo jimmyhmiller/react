@@ -80,8 +80,8 @@ function TodoList(t0) {
   let t1;
   if ($[0] !== _listItemCache || $[1] !== onToggle) {
     t1 = (todo) => {
-      const editing = _listItemCache.is(0, todo.id);
-      const visible = !_listItemCache.is(1, todo.id);
+      const editing = _listItemCache.matchesSelection(0, todo.id);
+      const visible = !_listItemCache.matchesSelection(1, todo.id);
       let className = todo.completed ? "completed" : "";
       if (editing) {
         className = className + " editing";

@@ -420,6 +420,8 @@ export type Dispatcher = {
     value: T,
     changed: null | ((previous: T, next: T, argument: mixed) => boolean),
     argument: mixed,
+    reads: null | $ReadOnlyArray<mixed>,
+    getState: null | (() => mixed),
   ): T,
   unstable_skipStoreHook(
     hook: Function,

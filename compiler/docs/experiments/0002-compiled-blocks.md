@@ -403,14 +403,14 @@ operand of `===` or `!==` in its own body is a *selection*
 
 ```js
 t1 = (item) => {
-  const selected = _listItemCache.is(0, item.id);   // was: item.id === selectedId
+  const selected = _listItemCache.matchesSelection(0, item.id);   // was: item.id === selectedId
   ...
 };
 t2 = _listItemCache.map(items, t1, [selectedId]);   // was: items.map(t1)
 ```
 
-- `is(index, comparand)` returns exactly `selections[index] === comparand`
-  (`!==` becomes `!is(...)`) and records the comparand for the item being
+- `matchesSelection(index, comparand)` returns exactly `selections[index] === comparand`
+  (`!==` becomes `!matchesSelection(...)`) and records the comparand for the item being
   computed.
 - The callback no longer captures the selections, so its own memoization no
   longer depends on them: its identity stands for everything else it reads.

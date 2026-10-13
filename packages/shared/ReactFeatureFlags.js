@@ -102,6 +102,14 @@ export const enableContextSelectors = __EXPERIMENTAL__;
 export const enableUpdateSlicing = __EXPERIMENTAL__;
 
 /**
+ * Selector reads: a store hook registered with a state getter is notified of
+ * a store change only if its selector reads a top-level key of the state that
+ * changed (as described by the compiler). Requires enableContextSelectors.
+ * Emitted by the (Rust) React Compiler; see compiler/docs/experiments.
+ */
+export const enableSelectorReads = __EXPERIMENTAL__;
+
+/**
  * Static islands: subtrees that need no hydration stay dehydrated (like an
  * Activity boundary that is never hydrated unless an update or a move reaches
  * it). Emitted by the (Rust) React Compiler; see compiler/docs/experiments.

@@ -91,11 +91,15 @@ export function selectHookResult<T>(
   value: T,
   changed: null | ((previous: T, next: T, argument: mixed) => boolean),
   argument: mixed,
+  reads: null | $ReadOnlyArray<mixed>,
+  getState: null | (() => mixed),
 ): T {
   return resolveDispatcher().unstable_selectHookResult(
     value,
     changed,
     argument,
+    reads,
+    getState,
   );
 }
 

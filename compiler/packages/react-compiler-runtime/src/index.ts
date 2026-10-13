@@ -99,6 +99,70 @@ function setCurrent(newDispatcher: any) {
 const guardFrames: Array<unknown> = [];
 
 /**
+ * Copies a value of a state variable that the component updates in place
+ * (`todos.push(todo)`), so that the compiler can apply the update to the copy
+ * and set the state to it. Only values with a well defined copy can be updated
+ * in place: for anything else (a class instance, a DOM node) the state has to
+ * be reassigned, and returning the value itself would silently drop the update.
+ * See compiler/docs/experiments/0007-state-variables.md.
+ */
+export function unstable_copyForUpdate<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.slice() as T;
+  }
+  if (value instanceof Map) {
+    return new Map(value) as T;
+  }
+  if (value instanceof Set) {
+    return new Set(value) as T;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype === Object.prototype || prototype === null) {
+      return Object.assign(Object.create(prototype), value);
+    }
+  }
+  throw new Error(
+    'Cannot update this value of a state variable in place, because it ' +
+      'cannot be copied: only arrays, plain objects, Maps and Sets can. ' +
+      'Assign a new value to the state variable instead.',
+  );
+}
+
+/**
+ * The compiler turns a modification of a state variable into an update of the
+ * state when it can tell what is modified (`todos[i].done = true`). It cannot
+ * for a value that is reached dynamically (`todos.find(isDone).done = true`):
+ * that would modify the state in place, and React would never render it. In
+ * development, the arrays and plain objects of the state are frozen on every
+ * render, so that such a modification throws instead of being lost.
+ * See compiler/docs/experiments/0007-state-variables.md.
+ */
+export function unstable_freezeState(value: unknown): void {
+  if (process.env.NODE_ENV !== 'production') {
+    deepFreeze(value);
+  }
+}
+
+function deepFreeze(value: unknown): void {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      // Not the component's to freeze: a class instance, a Map, a DOM node.
+      return;
+    }
+  }
+  // Frozen before its properties are visited, which ends cycles.
+  Object.freeze(value);
+  for (const key of Object.keys(value)) {
+    deepFreeze((value as Record<string, unknown>)[key]);
+  }
+}
+
+/**
  * When `enableEmitHookGuards` is set, this does runtime validation
  * of the no-conditional-hook-calls rule.
  * As React Compiler needs to statically understand which calls to move out of

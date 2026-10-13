@@ -48,9 +48,9 @@ function Tree(t0) {
   let t1;
   if ($[0] !== _listItemCache) {
     t1 = (node) => {
-      const open = _listItemCache.is(0, node.group);
-      const active = open && _listItemCache.is(1, node.id);
-      const alias = _listItemCache.is(1, node.alias);
+      const open = _listItemCache.matchesSelection(0, node.group);
+      const active = open && _listItemCache.matchesSelection(1, node.id);
+      const alias = _listItemCache.matchesSelection(1, node.alias);
 
       const t5 = node.id;
       const t6 = active || alias ? "active" : "";

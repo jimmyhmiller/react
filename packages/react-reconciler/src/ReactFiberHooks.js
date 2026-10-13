@@ -46,6 +46,7 @@ import {
   enableGestureTransition,
   enableContextSelectors,
   enableUpdateSlicing,
+  enableSelectorReads,
 } from 'shared/ReactFeatureFlags';
 import {
   REACT_CONTEXT_TYPE,
@@ -123,6 +124,8 @@ import {
 
 import getComponentNameFromFiber from 'react-reconciler/src/getComponentNameFromFiber';
 import is from 'shared/objectIs';
+import hasOwnProperty from 'shared/hasOwnProperty';
+import {checkKeyStringCoercion} from 'shared/CheckStringCoercion';
 import isArray from 'shared/isArray';
 import {
   markWorkInProgressReceivedUpdate,
@@ -249,6 +252,13 @@ type StoreInstance<T> = {
   // for a store change if it returns true.
   changed: null | ((previous: T, next: T, argument: mixed) => boolean),
   changedArgument: mixed,
+  // The top-level keys of the store's state that the snapshot is computed
+  // from, or null if unknown, set by selectHookResult for a store hook
+  // registered with a state getter (enableSelectorReads). A shared
+  // subscription only checks the snapshot when one of these keys changed.
+  reads: null | $ReadOnlyArray<mixed>,
+  // The instance's entry in its shared subscription, while subscribed.
+  subscriber: null | SharedStoreSubscriber,
 };
 
 type StoreConsistencyCheck<T> = {
@@ -1801,6 +1811,8 @@ function mountSyncExternalStore<T>(
     getSnapshot,
     changed: null,
     changedArgument: null,
+    reads: null,
+    subscriber: null,
   };
   hook.queue = inst;
 
@@ -2039,10 +2051,31 @@ function subscribeToStore<T>(
 // to other listeners; React's listener only reads snapshots (which must be
 // pure) and schedules renders. Legacy roots can render synchronously when an
 // update is scheduled, so they keep their own subscriptions.
+//
+// Selector reads (enableSelectorReads). A store hook registered with a state
+// getter promises that its snapshot is computed by its selector from the
+// getter's state, and the compiler describes the top-level keys of the state
+// that the selector reads. The subscription then keeps the state it was last
+// notified with and indexes its subscribers by those keys: when the store
+// notifies, it compares the previous and new state key by key, and only checks
+// the subscribers indexed under a changed key, and those whose keys are
+// unknown. A subscriber whose keys did not change computes its snapshot from
+// the same values (the selector is pure), so its snapshot is the same. This
+// relies on updates replacing the values they change, which the store
+// libraries require; if the state is not a plain object, or is the same object
+// as before, every subscriber is checked. In development, the skipped
+// subscribers are checked too, and a change is reported.
 type SharedStoreSubscriber = {
   fiber: Fiber | null,
   inst: StoreInstance<any>,
   index: number,
+  subscription: SharedStoreSubscription,
+  // The keys the subscriber is indexed under (enableSelectorReads): null if it
+  // is indexed as reading unknown keys.
+  indexed: boolean,
+  indexedReads: null | $ReadOnlyArray<mixed>,
+  // The last notification that checked the subscriber.
+  checkedAt: number,
 };
 
 type SharedStoreSubscription = {
@@ -2052,6 +2085,14 @@ type SharedStoreSubscription = {
   // Subscribers removed while the subscription was notifying.
   removed: number,
   notifying: boolean,
+  // enableSelectorReads: the state getter the state below was read with, the
+  // state of the last notification, the subscribers by the keys they read and
+  // those whose keys are unknown, and the number of notifications.
+  getState: null | (() => mixed),
+  state: mixed,
+  subscribersByKey: Map<string, Set<SharedStoreSubscriber>>,
+  unindexedSubscribers: Set<SharedStoreSubscriber>,
+  notifications: number,
 };
 
 const sharedStoreSubscribes: WeakSet<(() => void) => () => void> =
@@ -2061,6 +2102,25 @@ const sharedStoreSubscriptions: Map<
   (() => void) => () => void,
   SharedStoreSubscription,
 > = new Map();
+
+// The state getter of each store's subscribe function (enableSelectorReads),
+// recorded by selectHookResult, or null if two getters were recorded for it.
+const sharedStoreStateGetters: WeakMap<
+  (() => void) => () => void,
+  null | (() => mixed),
+> = new WeakMap();
+
+function recordStoreStateGetter(
+  subscribe: (() => void) => () => void,
+  getState: () => mixed,
+): void {
+  const existing = sharedStoreStateGetters.get(subscribe);
+  if (existing === undefined) {
+    sharedStoreStateGetters.set(subscribe, getState);
+  } else if (existing !== getState) {
+    sharedStoreStateGetters.set(subscribe, null);
+  }
+}
 
 function subscribeToSharedStore<T>(
   fiber: Fiber,
@@ -2075,22 +2135,178 @@ function subscribeToSharedStore<T>(
       subscribers: [],
       removed: 0,
       notifying: false,
+      getState: null,
+      state: null,
+      subscribersByKey: new Map(),
+      unindexedSubscribers: new Set(),
+      notifications: 0,
     };
     // Registered only once subscribing succeeded.
     created.unsubscribe = subscribe(() => notifySharedStore(created));
     subscription = created;
     sharedStoreSubscriptions.set(subscribe, created);
+    if (enableSelectorReads) {
+      // Changes before this point are checked by the subscribers' own
+      // consistency checks (updateStoreInstance).
+      readSharedStoreState(created);
+    }
   }
   const subscribers = subscription.subscribers;
   const subscriber: SharedStoreSubscriber = {
     fiber,
     inst,
     index: subscribers.length,
+    subscription,
+    indexed: false,
+    indexedReads: null,
+    checkedAt: 0,
   };
   subscribers.push(subscriber);
+  if (enableSelectorReads) {
+    inst.subscriber = subscriber;
+    indexSharedStoreSubscriber(subscriber);
+  }
   const shared = subscription;
   return () => unsubscribeFromSharedStore(shared, subscriber);
 }
+
+function indexSharedStoreSubscriber(subscriber: SharedStoreSubscriber): void {
+  const subscription = subscriber.subscription;
+  const reads = subscriber.inst.reads;
+  subscriber.indexed = true;
+  subscriber.indexedReads = reads;
+  if (reads === null) {
+    subscription.unindexedSubscribers.add(subscriber);
+    return;
+  }
+  const subscribersByKey = subscription.subscribersByKey;
+  for (let i = 0; i < reads.length; i++) {
+    const read = reads[i];
+    if (__DEV__) {
+      checkKeyStringCoercion(read);
+    }
+    const key = '' + (read as any);
+    let subscribers = subscribersByKey.get(key);
+    if (subscribers === undefined) {
+      subscribers = new Set();
+      subscribersByKey.set(key, subscribers);
+    }
+    subscribers.add(subscriber);
+  }
+}
+
+function unindexSharedStoreSubscriber(subscriber: SharedStoreSubscriber): void {
+  if (!subscriber.indexed) {
+    return;
+  }
+  const subscription = subscriber.subscription;
+  const reads = subscriber.indexedReads;
+  subscriber.indexed = false;
+  subscriber.indexedReads = null;
+  if (reads === null) {
+    subscription.unindexedSubscribers.delete(subscriber);
+    return;
+  }
+  const subscribersByKey = subscription.subscribersByKey;
+  for (let i = 0; i < reads.length; i++) {
+    const read = reads[i];
+    if (__DEV__) {
+      checkKeyStringCoercion(read);
+    }
+    const key = '' + (read as any);
+    const subscribers = subscribersByKey.get(key);
+    if (subscribers !== undefined) {
+      subscribers.delete(subscriber);
+      if (subscribers.size === 0) {
+        subscribersByKey.delete(key);
+      }
+    }
+  }
+}
+
+// Reads the store's state for the next notification to compare with. Returns
+// whether the state read before (if any) was read with the same getter, so
+// that the two can be compared.
+function readSharedStoreState(subscription: SharedStoreSubscription): boolean {
+  const getState = sharedStoreStateGetters.get(subscription.subscribe);
+  const comparable = getState != null && subscription.getState === getState;
+  if (getState == null) {
+    subscription.getState = null;
+    subscription.state = null;
+    return false;
+  }
+  try {
+    subscription.state = getState();
+    subscription.getState = getState;
+  } catch (error) {
+    subscription.getState = null;
+    subscription.state = null;
+    return false;
+  }
+  return comparable;
+}
+
+function isPlainObject(value: mixed): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+// The top-level keys whose values differ between two states, or null if they
+// cannot be compared key by key.
+function getChangedStoreKeys(
+  previous: mixed,
+  next: mixed,
+): null | Array<string> {
+  if (previous === next || !isPlainObject(previous) || !isPlainObject(next)) {
+    return null;
+  }
+  const previousState: {+[string]: mixed} = previous as any;
+  const nextState: {+[string]: mixed} = next as any;
+  const changed = [];
+  for (const key in nextState) {
+    if (
+      hasOwnProperty.call(nextState, key) &&
+      (!hasOwnProperty.call(previousState, key) ||
+        !is(previousState[key], nextState[key]))
+    ) {
+      changed.push(key);
+    }
+  }
+  for (const key in previousState) {
+    if (
+      hasOwnProperty.call(previousState, key) &&
+      !hasOwnProperty.call(nextState, key)
+    ) {
+      changed.push(key);
+    }
+  }
+  return changed;
+}
+
+function checkSharedStoreSubscriber(subscriber: SharedStoreSubscriber): void {
+  const fiber = subscriber.fiber;
+  if (fiber === null) {
+    return;
+  }
+  if (sharedStoreSubscriberChanged(subscriber)) {
+    startUpdateTimerByLane(SyncLane, 'updateSyncExternalStore()', fiber);
+    forceStoreRerender(fiber);
+  }
+}
+
+function sharedStoreSubscriberChanged(
+  subscriber: SharedStoreSubscriber,
+): boolean {
+  const inst = subscriber.inst;
+  return inst.changed !== null
+    ? checkIfSelectedSnapshotChanged(inst)
+    : checkIfSnapshotChanged(inst);
+}
+
+let didWarnAboutSkippedStoreSnapshot = false;
 
 function notifySharedStore(subscription: SharedStoreSubscription): void {
   const subscribers = subscription.subscribers;
@@ -2100,20 +2316,59 @@ function notifySharedStore(subscription: SharedStoreSubscription): void {
   const wasNotifying = subscription.notifying;
   subscription.notifying = true;
   try {
-    for (let i = 0; i < length; i++) {
-      const subscriber = subscribers[i];
-      const fiber = subscriber.fiber;
-      if (fiber === null) {
-        continue;
+    let changedKeys = null;
+    if (enableSelectorReads) {
+      const previousState = subscription.state;
+      if (readSharedStoreState(subscription)) {
+        changedKeys = getChangedStoreKeys(previousState, subscription.state);
       }
-      const inst = subscriber.inst;
-      if (
-        inst.changed !== null
-          ? checkIfSelectedSnapshotChanged(inst)
-          : checkIfSnapshotChanged(inst)
-      ) {
-        startUpdateTimerByLane(SyncLane, 'updateSyncExternalStore()', fiber);
-        forceStoreRerender(fiber);
+    }
+    if (changedKeys === null) {
+      for (let i = 0; i < length; i++) {
+        checkSharedStoreSubscriber(subscribers[i]);
+      }
+    } else {
+      // Only the subscribers that read a changed key, and those whose keys
+      // are unknown, can have a new snapshot. They are collected first, so
+      // that subscribers indexed during the checks are not checked.
+      const notification = ++subscription.notifications;
+      const candidates: Array<SharedStoreSubscriber> = [];
+      const collect = (subscriber: SharedStoreSubscriber) => {
+        if (subscriber.checkedAt !== notification) {
+          subscriber.checkedAt = notification;
+          candidates.push(subscriber);
+        }
+      };
+      subscription.unindexedSubscribers.forEach(collect);
+      const subscribersByKey = subscription.subscribersByKey;
+      for (let i = 0; i < changedKeys.length; i++) {
+        const keySubscribers = subscribersByKey.get(changedKeys[i]);
+        if (keySubscribers !== undefined) {
+          keySubscribers.forEach(collect);
+        }
+      }
+      for (let i = 0; i < candidates.length; i++) {
+        checkSharedStoreSubscriber(candidates[i]);
+      }
+      if (__DEV__) {
+        for (let i = 0; i < length; i++) {
+          const subscriber = subscribers[i];
+          if (
+            !didWarnAboutSkippedStoreSnapshot &&
+            subscriber.fiber !== null &&
+            subscriber.checkedAt !== notification &&
+            sharedStoreSubscriberChanged(subscriber)
+          ) {
+            didWarnAboutSkippedStoreSnapshot = true;
+            console.error(
+              'The snapshot of a store hook changed although none of the ' +
+                'top-level keys of the store state that its selector reads ' +
+                'changed, so the component was not updated. Stores must ' +
+                'replace the values they update instead of mutating them, ' +
+                'and selectors must only read the state they are passed.',
+            );
+          }
+        }
       }
     }
   } finally {
@@ -2132,6 +2387,12 @@ function unsubscribeFromSharedStore(
     return;
   }
   subscriber.fiber = null;
+  if (enableSelectorReads) {
+    unindexSharedStoreSubscriber(subscriber);
+    if (subscriber.inst.subscriber === subscriber) {
+      subscriber.inst.subscriber = null;
+    }
+  }
   const subscribers = subscription.subscribers;
   if (subscription.notifying) {
     subscription.removed++;
@@ -2210,9 +2471,20 @@ function updateStoreSelection<T>(
   inst: StoreInstance<T>,
   changed: null | ((previous: T, next: T, argument: mixed) => boolean),
   argument: mixed,
+  reads: null | $ReadOnlyArray<mixed>,
 ): void {
   inst.changed = changed;
   inst.changedArgument = argument;
+  if (enableSelectorReads && inst.reads !== reads) {
+    const subscriber = inst.subscriber;
+    if (subscriber !== null) {
+      unindexSharedStoreSubscriber(subscriber);
+      inst.reads = reads;
+      indexSharedStoreSubscriber(subscriber);
+    } else {
+      inst.reads = reads;
+    }
+  }
 }
 
 function forceStoreRerender(fiber: Fiber) {
@@ -4304,10 +4576,19 @@ function recordSelectedStore<T>(
 // the next render can skip it (see skipStoreHook).
 //
 // Otherwise nothing changes.
+//
+// Selector reads (enableSelectorReads): for a store hook registered with a
+// state getter, `reads` lists the top-level keys of the store's state that the
+// call's selector reads (null if unknown). It is committed with the render
+// like the comparison, and the getter is recorded for the store's subscribe
+// function, so that a shared subscription only checks the snapshots of calls
+// whose keys changed (see notifySharedStore).
 function selectHookResult<T>(
   value: T,
   changed: null | ((previous: T, next: T, argument: mixed) => boolean),
   argument: mixed,
+  reads: null | $ReadOnlyArray<mixed>,
+  getState: null | (() => mixed),
 ): T {
   const kind = selectedHookKind;
   const fiber = selectedHookFiber;
@@ -4356,19 +4637,37 @@ function selectHookResult<T>(
     }
     const nextChanged = selected ? changed : null;
     const nextArgument = selected && changed !== null ? argument : null;
+    let nextReads = null;
+    if (
+      enableSelectorReads &&
+      selected &&
+      getState !== null &&
+      subscribe !== null
+    ) {
+      recordStoreStateGetter(subscribe, getState);
+      nextReads = reads;
+    }
     if (selectedStoreMounted) {
       // The instance was created by this render.
       inst.changed = nextChanged as any;
       inst.changedArgument = nextArgument;
+      inst.reads = nextReads;
     } else if (
       inst.changed !== nextChanged ||
-      inst.changedArgument !== nextArgument
+      inst.changedArgument !== nextArgument ||
+      inst.reads !== nextReads
     ) {
       currentlyRenderingFiber.flags |= PassiveEffect;
       pushSimpleEffect(
         HookHasEffect | HookPassive,
         createEffectInstance(),
-        updateStoreSelection.bind(null, inst, nextChanged, nextArgument),
+        updateStoreSelection.bind(
+          null,
+          inst,
+          nextChanged,
+          nextArgument,
+          nextReads,
+        ),
         null,
       );
     }
@@ -4888,8 +5187,10 @@ if (__DEV__) {
       value: T,
       changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
+      reads: null | $ReadOnlyArray<mixed>,
+      getState: null | (() => mixed),
     ): T {
-      return selectHookResult(value, changed, argument);
+      return selectHookResult(value, changed, argument, reads, getState);
     },
     unstable_skipStoreHook(
       hook: Function,
@@ -5091,8 +5392,10 @@ if (__DEV__) {
       value: T,
       changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
+      reads: null | $ReadOnlyArray<mixed>,
+      getState: null | (() => mixed),
     ): T {
-      return selectHookResult(value, changed, argument);
+      return selectHookResult(value, changed, argument, reads, getState);
     },
     unstable_skipStoreHook(
       hook: Function,
@@ -5289,8 +5592,10 @@ if (__DEV__) {
       value: T,
       changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
+      reads: null | $ReadOnlyArray<mixed>,
+      getState: null | (() => mixed),
     ): T {
-      return selectHookResult(value, changed, argument);
+      return selectHookResult(value, changed, argument, reads, getState);
     },
     unstable_skipStoreHook(
       hook: Function,
@@ -5487,8 +5792,10 @@ if (__DEV__) {
       value: T,
       changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
+      reads: null | $ReadOnlyArray<mixed>,
+      getState: null | (() => mixed),
     ): T {
-      return selectHookResult(value, changed, argument);
+      return selectHookResult(value, changed, argument, reads, getState);
     },
     unstable_skipStoreHook(
       hook: Function,
@@ -5692,8 +5999,10 @@ if (__DEV__) {
       value: T,
       changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
+      reads: null | $ReadOnlyArray<mixed>,
+      getState: null | (() => mixed),
     ): T {
-      return selectHookResult(value, changed, argument);
+      return selectHookResult(value, changed, argument, reads, getState);
     },
     unstable_skipStoreHook(
       hook: Function,
@@ -5916,8 +6225,10 @@ if (__DEV__) {
       value: T,
       changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
+      reads: null | $ReadOnlyArray<mixed>,
+      getState: null | (() => mixed),
     ): T {
-      return selectHookResult(value, changed, argument);
+      return selectHookResult(value, changed, argument, reads, getState);
     },
     unstable_skipStoreHook(
       hook: Function,
@@ -6140,8 +6451,10 @@ if (__DEV__) {
       value: T,
       changed: null | ((previous: T, next: T, argument: mixed) => boolean),
       argument: mixed,
+      reads: null | $ReadOnlyArray<mixed>,
+      getState: null | (() => mixed),
     ): T {
-      return selectHookResult(value, changed, argument);
+      return selectHookResult(value, changed, argument, reads, getState);
     },
     unstable_skipStoreHook(
       hook: Function,

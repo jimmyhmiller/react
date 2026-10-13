@@ -349,36 +349,7 @@ pub fn find_context_identifiers(
         binding_info: FxHashMap::default(),
         error: None,
     };
-    let mut walker = AstWalker::with_initial_scope(scope_info, func_scope);
-
-    // Walk params and body (like Babel's func.traverse())
-    match func {
-        FunctionNode::FunctionDeclaration(d) => {
-            for param in &d.params {
-                walker.walk_pattern(&mut visitor, param);
-            }
-            walker.walk_block_statement(&mut visitor, &d.body);
-        }
-        FunctionNode::FunctionExpression(e) => {
-            for param in &e.params {
-                walker.walk_pattern(&mut visitor, param);
-            }
-            walker.walk_block_statement(&mut visitor, &e.body);
-        }
-        FunctionNode::ArrowFunctionExpression(a) => {
-            for param in &a.params {
-                walker.walk_pattern(&mut visitor, param);
-            }
-            match a.body.as_ref() {
-                ArrowFunctionBody::BlockStatement(block) => {
-                    walker.walk_block_statement(&mut visitor, block);
-                }
-                ArrowFunctionBody::Expression(expr) => {
-                    walker.walk_expression(&mut visitor, expr);
-                }
-            }
-        }
-    }
+    walk_function(func, scope_info, func_scope, &mut visitor);
 
     if let Some(error) = visitor.error {
         return Err(error);
@@ -443,4 +414,86 @@ pub fn find_context_identifiers(
         })
         .map(|(id, _)| id)
         .collect())
+}
+
+/// Walks the params and body of `func` (like Babel's `func.traverse()`).
+fn walk_function(
+    func: &FunctionNode<'_>,
+    scope_info: &ScopeInfo,
+    func_scope: ScopeId,
+    visitor: &mut ContextIdentifierVisitor<'_>,
+) {
+    let mut walker = AstWalker::with_initial_scope(scope_info, func_scope);
+    match func {
+        FunctionNode::FunctionDeclaration(d) => {
+            for param in &d.params {
+                walker.walk_pattern(visitor, param);
+            }
+            walker.walk_block_statement(visitor, &d.body);
+        }
+        FunctionNode::FunctionExpression(e) => {
+            for param in &e.params {
+                walker.walk_pattern(visitor, param);
+            }
+            walker.walk_block_statement(visitor, &e.body);
+        }
+        FunctionNode::ArrowFunctionExpression(a) => {
+            for param in &a.params {
+                walker.walk_pattern(visitor, param);
+            }
+            match a.body.as_ref() {
+                ArrowFunctionBody::BlockStatement(block) => {
+                    walker.walk_block_statement(visitor, block);
+                }
+                ArrowFunctionBody::Expression(expr) => {
+                    walker.walk_expression(visitor, expr);
+                }
+            }
+        }
+    }
+}
+
+/// Whether a function nested in `func` reassigns a `let` or `var` that `func`
+/// declares: what makes a variable a state variable, if the nested function
+/// runs after render (`compiler/docs/experiments/0007-state-variables.md`).
+///
+/// A function named like a hook that does this is a hook even if it calls no
+/// other hook: it will call `useState` once compiled, and is not correct
+/// unless it is compiled.
+pub fn reassigns_own_variable_in_nested_function(
+    func: &FunctionNode<'_>,
+    scope_info: &ScopeInfo,
+) -> bool {
+    let Some(func_scope) = scope_info.resolve_scope_for_node(func.node_id()) else {
+        return false;
+    };
+    // Only records an error for an unsupported assignment target, which the
+    // compilation of the function reports.
+    let mut env = Environment::new();
+    let mut visitor = ContextIdentifierVisitor {
+        scope_info,
+        env: &mut env,
+        function_stack: Vec::new(),
+        binding_info: FxHashMap::default(),
+        error: None,
+    };
+    walk_function(func, scope_info, func_scope, &mut visitor);
+
+    visitor.binding_info.iter().any(|(binding_id, info)| {
+        if !info.reassigned_by_inner_fn {
+            return false;
+        }
+        let binding = &scope_info.bindings[binding_id.0 as usize];
+        if !matches!(binding.kind, BindingKind::Let | BindingKind::Var) {
+            return false;
+        }
+        let mut scope = Some(binding.scope);
+        while let Some(current) = scope {
+            if current == func_scope {
+                return true;
+            }
+            scope = scope_info.scopes[current.0 as usize].parent;
+        }
+        false
+    })
 }

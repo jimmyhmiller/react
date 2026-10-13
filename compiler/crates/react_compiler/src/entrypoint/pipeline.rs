@@ -89,6 +89,37 @@ pub fn compile_fn(
         context.timing.stop();
     }
 
+    if env.config.enable_state_variables
+        && react_compiler_optimization::state_variables::has_state_variable_candidates(&hir, &env)
+    {
+        context.timing.start("LowerStateVariables");
+        // From here on the function may have state variables: if the analysis
+        // or the rewrite fails, it must not be left as it is.
+        context.has_state_variables = true;
+        let post_render = infer_post_render_functions(func, fn_name, scope_info, fn_type, &env)?;
+        let mut imports = RuntimeImports {
+            context: &mut *context,
+        };
+        let state_variables = react_compiler_optimization::state_variables::lower_state_variables(
+            &mut hir,
+            &mut env,
+            &post_render,
+            &mut imports,
+        )?;
+        context.has_state_variables = state_variables > 0;
+        context.timing.stop();
+
+        if context.debug_enabled {
+            context.timing.start("debug_print:LowerStateVariables");
+            let debug_state_variables = debug_print::debug_hir(&hir, &env);
+            context.log_debug(DebugLogEntry::new(
+                "LowerStateVariables",
+                debug_state_variables,
+            ));
+            context.timing.stop();
+        }
+    }
+
     context.timing.start("PruneMaybeThrows");
     react_compiler_optimization::prune_maybe_throws(&mut hir, &mut env.functions)?;
     context.timing.stop();
@@ -338,7 +369,6 @@ pub fn compile_fn(
             context.log_debug(DebugLogEntry::new("CompileJsxBlocks", debug_jsx_blocks));
             context.timing.stop();
         }
-
     }
 
     // Context reads are rewritten before AnalyseFunctions, so that the effects
@@ -356,12 +386,15 @@ pub fn compile_fn(
             context: &mut *context,
         };
         let update_slicing = env.config.enable_update_slicing;
-        *selected_context_reads = react_compiler_optimization::context_selectors::select_context_reads(
-            &mut hir,
-            &mut env,
-            &mut imports,
-            update_slicing,
-        );
+        let selector_reads = env.config.enable_selector_reads;
+        *selected_context_reads =
+            react_compiler_optimization::context_selectors::select_context_reads(
+                &mut hir,
+                &mut env,
+                &mut imports,
+                update_slicing,
+                selector_reads,
+            );
         context.timing.stop();
 
         if context.debug_enabled {
@@ -2033,8 +2066,8 @@ fn run_pipeline_passes(
                     pruned_memo_values: o.func.pruned_memo_values,
                     outlined: Vec::new(),
                     block_templates: o.func.block_templates,
-            returns_block: o.func.returns_block,
-            registers_context_hook: o.func.registers_context_hook,
+                    returns_block: o.func.returns_block,
+                    registers_context_hook: o.func.registers_context_hook,
                 },
                 fn_type: o.fn_type,
             })
@@ -2118,6 +2151,85 @@ fn log_errors_as_events(errors: &CompilerError, context: &mut ProgramContext) {
     }
 }
 
+/// Finds the functions of `func` that run after render, for state variables
+/// (`compiler/docs/experiments/0007-state-variables.md`).
+///
+/// Whether a function runs after render depends on the operand effects of
+/// `InferMutationAliasingRanges`, but state variables are rewritten before any
+/// inference. So `func` is lowered a second time, into an environment of its
+/// own, and run through the passes that the effects require. Lowering is
+/// deterministic: the result describes the functions of the first lowering by
+/// the same `FunctionId`s. The diagnostics of this environment are discarded;
+/// the function is reported on when it is compiled for real.
+fn infer_post_render_functions(
+    func: &FunctionNode<'_>,
+    fn_name: Option<&str>,
+    scope_info: &ScopeInfo,
+    fn_type: ReactFunctionType,
+    original: &Environment,
+) -> Result<react_compiler_optimization::state_variables::PostRenderFunctions, CompilerError> {
+    let mut env = Environment::with_config(original.config.clone());
+    env.fn_type = fn_type;
+    env.output_mode = original.output_mode;
+    env.code = original.code.clone();
+    env.filename = original.filename.clone();
+    env.reference_node_ids = original.reference_node_ids.clone();
+
+    let mut hir = react_compiler_lowering::lower(func, fn_name, scope_info, &mut env)?;
+    if env.has_invariant_errors() {
+        return Err(env.take_invariant_errors());
+    }
+
+    react_compiler_optimization::prune_maybe_throws(&mut hir, &mut env.functions)?;
+    react_compiler_optimization::drop_manual_memoization(&mut hir, &mut env)?;
+    react_compiler_optimization::inline_immediately_invoked_function_expressions(
+        &mut hir, &mut env,
+    );
+    react_compiler_optimization::merge_consecutive_blocks::merge_consecutive_blocks(
+        &mut hir,
+        &mut env.functions,
+    );
+    react_compiler_ssa::enter_ssa(&mut hir, &mut env).map_err(CompilerError::from)?;
+    react_compiler_ssa::eliminate_redundant_phi(&mut hir, &mut env);
+    react_compiler_optimization::constant_propagation(&mut hir, &mut env);
+    react_compiler_typeinference::infer_types(&mut hir, &mut env)?;
+    react_compiler_optimization::optimize_props_method_calls(&mut hir, &env);
+    react_compiler_inference::analyse_functions(&mut hir, &mut env, &mut |_func, _env| {})?;
+    if env.has_invariant_errors() {
+        return Err(env.take_invariant_errors());
+    }
+    react_compiler_inference::infer_mutation_aliasing_effects(&mut hir, &mut env, false)?;
+    react_compiler_optimization::dead_code_elimination(&mut hir, &env);
+    react_compiler_optimization::prune_maybe_throws(&mut hir, &mut env.functions)?;
+    react_compiler_inference::infer_mutation_aliasing_ranges(&mut hir, &mut env, false)?;
+    if env.has_invariant_errors() {
+        return Err(env.take_invariant_errors());
+    }
+
+    Ok(react_compiler_inference::infer_post_render_functions(
+        &hir, &env,
+    ))
+}
+
+impl react_compiler_optimization::state_variables::StateVariableImports for RuntimeImports<'_> {
+    fn use_state(&mut self) -> react_compiler_hir::NonLocalBinding {
+        let import = self.context.add_import_specifier("react", "useState", None);
+        react_compiler_hir::NonLocalBinding::ImportSpecifier {
+            name: import.name,
+            module: import.module,
+            imported: import.imported,
+        }
+    }
+
+    fn copy_for_update(&mut self) -> react_compiler_hir::NonLocalBinding {
+        self.binding("unstable_copyForUpdate")
+    }
+
+    fn freeze_state(&mut self) -> react_compiler_hir::NonLocalBinding {
+        self.binding("unstable_freezeState")
+    }
+}
+
 /// Imports of react/compiler-runtime functions for `SelectContextReads`.
 struct RuntimeImports<'c> {
     context: &'c mut ProgramContext,
@@ -2134,7 +2246,9 @@ impl RuntimeImports<'_> {
         name_hint: Option<&str>,
     ) -> react_compiler_hir::NonLocalBinding {
         let module = self.context.react_runtime_module.clone();
-        let import = self.context.add_import_specifier(&module, specifier, name_hint);
+        let import = self
+            .context
+            .add_import_specifier(&module, specifier, name_hint);
         react_compiler_hir::NonLocalBinding::ModuleLocal { name: import.name }
     }
 }
@@ -2147,9 +2261,7 @@ impl react_compiler_optimization::static_islands::StaticIslandImports for Runtim
     }
 }
 
-impl react_compiler_optimization::context_selectors::ContextSelectorImports
-    for RuntimeImports<'_>
-{
+impl react_compiler_optimization::context_selectors::ContextSelectorImports for RuntimeImports<'_> {
     fn use_context_paths(&mut self) -> react_compiler_hir::NonLocalBinding {
         self.binding("unstable_useContextPaths")
     }

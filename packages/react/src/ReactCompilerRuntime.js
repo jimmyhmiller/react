@@ -25,6 +25,7 @@ import {
   enableContextSelectors,
   enableNoCloningMemoCache,
   enableUpdateSlicing,
+  enableSelectorReads,
 } from 'shared/ReactFeatureFlags';
 import isArray from 'shared/isArray';
 
@@ -34,6 +35,67 @@ export {useMemoCache as c};
 // a visible Activity boundary, and left dehydrated by the client. See
 // compiler/docs/experiments/0005-static-islands.md.
 export const unstable_StaticIsland: symbol = REACT_STATIC_ISLAND_TYPE;
+
+// Copies a value of a state variable that the component updates in place
+// (`todos.push(todo)`), so that the compiler can apply the update to the copy
+// and set the state to it. Only values with a well defined copy can be updated
+// in place: for anything else (a class instance, a DOM node) the state has to
+// be reassigned, and returning the value itself would silently drop the
+// update. See compiler/docs/experiments/0007-state-variables.md.
+export function unstable_copyForUpdate<T>(value: T): T {
+  if (isArray(value)) {
+    return (value.slice(): any);
+  }
+  if (value instanceof Map) {
+    return (new Map(value): any);
+  }
+  if (value instanceof Set) {
+    return (new Set(value): any);
+  }
+  if (typeof value === 'object' && value !== null) {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype === Object.prototype || prototype === null) {
+      return Object.assign(Object.create(prototype), value);
+    }
+  }
+  throw new Error(
+    'Cannot update this value of a state variable in place, because it ' +
+      'cannot be copied: only arrays, plain objects, Maps and Sets can. ' +
+      'Assign a new value to the state variable instead.',
+  );
+}
+
+// The compiler turns a modification of a state variable into an update of the
+// state when it can tell what is modified (`todos[i].done = true`). It cannot
+// for a value that is reached dynamically (`todos.find(isDone).done = true`):
+// that would modify the state in place, and React would never render it. In
+// development, the arrays and plain objects of the state are frozen on every
+// render, so that such a modification throws instead of being lost. See
+// compiler/docs/experiments/0007-state-variables.md.
+export function unstable_freezeState(value: mixed): void {
+  if (__DEV__) {
+    deepFreeze(value);
+  }
+}
+
+function deepFreeze(value: mixed): void {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) {
+    return;
+  }
+  if (!isArray(value)) {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      // Not the component's to freeze: a class instance, a Map, a DOM node.
+      return;
+    }
+  }
+  // Frozen before its properties are visited, which ends cycles.
+  Object.freeze(value);
+  const keys = Object.keys((value: any));
+  for (let i = 0; i < keys.length; i++) {
+    deepFreeze((value: any)[keys[i]]);
+  }
+}
 
 // See enableContextSelectors.
 export function unstable_useContextWithSelector<T>(
@@ -138,9 +200,22 @@ export function unstable_registerContextHook(hook: Function): void {
   }
 }
 
-export function unstable_registerStoreHook(hook: Function): void {
+// The state getters of registered store hooks (enableSelectorReads). A store
+// hook registered with a getter promises that its snapshot is
+// `selector(getState())`, where `selector` is its first argument, so that
+// React can compare the keys of the state the selector reads (see
+// unstable_selectHookPaths).
+const storeStateGetters: WeakMap<Function, () => mixed> = new WeakMap();
+
+export function unstable_registerStoreHook(
+  hook: Function,
+  getState?: () => mixed,
+): void {
   if (enableContextSelectors) {
     selectedHooks.set(hook, 2);
+    if (enableSelectorReads && typeof getState === 'function') {
+      storeStateGetters.set(hook, getState);
+    }
   }
 }
 
@@ -168,19 +243,32 @@ export function unstable_startSelectedHook(hook: Function): 0 | 1 | 2 {
   return kind;
 }
 
+//
+// `reads` (enableSelectorReads) lists the top-level keys of the store's state
+// that the selector passed as the hook's first argument reads, if the compiler
+// could describe them. For a store hook registered with a state getter, React
+// then only checks the call's snapshot when one of those keys changed.
 export function unstable_selectHookPaths<T>(
   started: 0 | 1 | 2,
   value: T,
   hook: Function,
   paths: SelectedPaths | null,
+  reads?: $ReadOnlyArray<mixed> | null,
 ): T {
-  return started !== 0
-    ? selectHookResult(
-        value,
-        paths === null ? null : (pathsChanged as any),
-        paths,
-      )
-    : value;
+  if (started === 0) {
+    return value;
+  }
+  let getState = null;
+  if (enableSelectorReads && started === 2 && reads != null) {
+    getState = storeStateGetters.get(hook) ?? null;
+  }
+  return selectHookResult(
+    value,
+    paths === null ? null : (pathsChanged as any),
+    paths,
+    getState === null ? null : (reads as any),
+    getState,
+  );
 }
 
 // Update slicing (enableUpdateSlicing): after
@@ -256,7 +344,7 @@ export function unstable_selectHookResult<T>(
   select: (value: T) => Array<mixed>,
 ): T {
   return started !== 0
-    ? selectHookResult(value, selectorChanged as any, select)
+    ? selectHookResult(value, selectorChanged as any, select, null, null)
     : value;
 }
 
@@ -287,7 +375,7 @@ export function unstable_selectHookResult<T>(
 // compare it with `===` or `!==` (such as `item.id === selectedId`), the
 // compiler calls `map(array, callback, selections)` instead of
 // `array.map(callback)`, and replaces each comparison with
-// `is(selectionIndex, comparand)`. `is` returns exactly
+// `matchesSelection(selectionIndex, comparand)`, which returns exactly
 // `selections[selectionIndex] === comparand`, and records the comparand for the
 // item being computed.
 //
@@ -303,7 +391,7 @@ export function unstable_selectHookResult<T>(
 // that committed the previous result update only those items.
 //
 // The callback's identity stands for everything else it reads: the compiler
-// memoizes it on those values, and only the selections are read through `is`.
+// memoizes it on those values, and only the selections are read through `matchesSelection`.
 //
 // Recording comparands costs a little for every item, and is only useful if
 // the same array is mapped again. `map` records them when it maps the same
@@ -489,7 +577,7 @@ class ListItemMemoCache {
 
   // `selections[selection] === comparand`, recording the comparand for the
   // item that `map` is computing.
-  is(selection: number, comparand: mixed): boolean {
+  matchesSelection(selection: number, comparand: mixed): boolean {
     const writeComparands = this.writeComparands;
     if (writeComparands !== null) {
       const comparands = writeComparands[selection];
@@ -506,7 +594,8 @@ class ListItemMemoCache {
     return this.selections[selection] === comparand;
   }
 
-  // `array.map(callback)`, where the callback reads `selections` through `is`.
+  // `array.map(callback)`, where the callback reads `selections` through
+  // `matchesSelection`.
   map(
     array: $ReadOnlyArray<mixed>,
     callback: (
@@ -680,7 +769,7 @@ class ListItemMemoCache {
     return result;
   }
 
-  // Makes `next` and `is` write to the given arrays, and returns the arrays
+  // Makes `next` and `matchesSelection` write to the given arrays, and returns the arrays
   // for the comparands.
   startWriting(
     caches: Array<void | Array<mixed>>,

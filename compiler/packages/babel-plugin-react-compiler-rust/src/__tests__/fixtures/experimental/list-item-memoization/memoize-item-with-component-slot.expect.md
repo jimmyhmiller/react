@@ -193,7 +193,7 @@ function List(t0) {
     t1 = (todo) => {
       const t5 = todo.id;
       const todo$0 = todo;
-      const editing = _listItemCache.is(0, todo.id);
+      const editing = _listItemCache.matchesSelection(0, todo.id);
       const onToggle$0 = onToggle;
       const onSave$0 = onSave;
       let className = "";

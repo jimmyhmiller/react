@@ -1,11 +1,11 @@
 pub mod constant_propagation;
+pub mod context_selectors;
 pub mod dead_code_elimination;
 pub mod drop_manual_memoization;
 pub mod inline_components;
 pub mod inline_iifes;
 mod jsx_block_positions;
 pub mod jsx_blocks;
-pub mod context_selectors;
 pub mod memoize_list_items;
 pub mod merge_consecutive_blocks;
 pub mod name_anonymous_functions;
@@ -15,14 +15,15 @@ pub mod outline_functions;
 pub mod outline_jsx;
 pub mod prune_maybe_throws;
 pub mod prune_unused_labels_hir;
+pub mod state_variables;
 pub mod static_islands;
 
 pub use constant_propagation::constant_propagation;
 pub use dead_code_elimination::dead_code_elimination;
 pub use drop_manual_memoization::drop_manual_memoization;
 pub use inline_components::{
-    CalleeSummary, InlineCandidate, InlineComponentCandidates, NotInlinableReason, inline_components,
-    summarize_callee,
+    CalleeSummary, InlineCandidate, InlineComponentCandidates, NotInlinableReason,
+    inline_components, summarize_callee,
 };
 pub use inline_iifes::inline_immediately_invoked_function_expressions;
 pub use jsx_blocks::compile_jsx_blocks;

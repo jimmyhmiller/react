@@ -77,7 +77,7 @@ function List(t0) {
   if ($[0] !== _listItemCache) {
     t1 = (item) => {
       const t4 = item.id;
-      const t5 = _listItemCache.is(0, item.id);
+      const t5 = _listItemCache.matchesSelection(0, item.id);
       const $0 = _listItemCache.next(4, t4);
       let t6;
       if ($0[0] !== item || $0[1] !== t4 || $0[2] !== t5) {

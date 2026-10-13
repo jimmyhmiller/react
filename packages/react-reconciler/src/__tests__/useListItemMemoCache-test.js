@@ -253,7 +253,7 @@ describe('unstable_useListItemMemoCache()', () => {
     //     return items.map(item => renderItem(item, item.id === selectedId));
     //   }
     //
-    // The callback reads `selectedId` only through `is`, so it does not depend
+    // The callback reads `selectedId` only through `matchesSelection`, so it does not depend
     // on it and keeps its identity.
     function SelectList({items, selectedId}) {
       const $ = useMemoCache(1);
@@ -262,7 +262,7 @@ describe('unstable_useListItemMemoCache()', () => {
       if ($[0] === SENTINEL) {
         callback = item => {
           invocations++;
-          const selected = listItemCache.is(0, item.id);
+          const selected = listItemCache.matchesSelection(0, item.id);
           const $$ = listItemCache.next(3, item.id);
           let t;
           if ($$[0] !== item || $$[1] !== selected) {
@@ -401,9 +401,10 @@ describe('unstable_useListItemMemoCache()', () => {
         let callback;
         if ($[0] === SENTINEL) {
           callback = item => {
-            const inGroup = listItemCache.is(0, item.group);
-            const isActive = inGroup && listItemCache.is(1, item.id);
-            const isAlsoActive = listItemCache.is(1, item.alias);
+            const inGroup = listItemCache.matchesSelection(0, item.group);
+            const isActive =
+              inGroup && listItemCache.matchesSelection(1, item.id);
+            const isAlsoActive = listItemCache.matchesSelection(1, item.alias);
             listItemCache.next(0, item.id);
             Scheduler.log('render ' + item.id);
             return (
@@ -506,7 +507,7 @@ describe('unstable_useListItemMemoCache()', () => {
         let callback;
         if ($[0] === SENTINEL) {
           callback = item => {
-            const selected = listItemCache.is(0, item.id);
+            const selected = listItemCache.matchesSelection(0, item.id);
             const $$ = listItemCache.next(3, item.id);
             if (selected && item.id === 3 && !resolved) {
               Scheduler.log('suspend');

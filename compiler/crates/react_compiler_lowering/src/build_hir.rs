@@ -291,6 +291,85 @@ fn promote_temporary(builder: &mut HirBuilder, identifier_id: IdentifierId) {
         Some(IdentifierName::Promoted(format!("#t{}", decl_id.0)));
 }
 
+/// Lowers `x++`, `++x`, `x--` and `--x` where `x` is a context variable, as
+/// the load, binary expression and store of `x = x + 1`, the way an update of
+/// a member expression is lowered. The value is the previous value for a
+/// postfix update, and the new value for a prefix update.
+///
+/// Only with `enable_state_variables`: a state variable is a context variable
+/// (it is reassigned by a function), and `count++` is how it is updated.
+fn lower_context_update_expression(
+    builder: &mut HirBuilder,
+    update: &react_compiler_ast::expressions::UpdateExpression,
+    ident: &react_compiler_ast::expressions::Identifier,
+    loc: Option<SourceLocation>,
+) -> Result<InstructionValue, CompilerError> {
+    let start = ident.base.start.unwrap_or(0);
+    let ident_loc = convert_opt_loc(&ident.base.loc);
+    let binding =
+        builder.resolve_identifier(&ident.name, start, ident_loc.clone(), ident.base.node_id)?;
+    let VariableBinding::Identifier { identifier, .. } = binding else {
+        let mut error = CompilerError::new();
+        error.push_error_detail(CompilerErrorDetail {
+            category: ErrorCategory::Invariant,
+            reason: "Expected a context variable to resolve to a local binding".to_string(),
+            description: None,
+            loc,
+            suggestions: None,
+        });
+        return Err(error);
+    };
+    let place = Place {
+        identifier,
+        effect: Effect::Unknown,
+        reactive: false,
+        loc: ident_loc.clone(),
+    };
+    let binary_op = match &update.operator {
+        react_compiler_ast::operators::UpdateOperator::Increment => BinaryOperator::Add,
+        react_compiler_ast::operators::UpdateOperator::Decrement => BinaryOperator::Subtract,
+    };
+    let prev_value = lower_value_to_temporary(
+        builder,
+        InstructionValue::LoadContext {
+            place: place.clone(),
+            loc: ident_loc,
+        },
+    )?;
+    let one = lower_value_to_temporary(
+        builder,
+        InstructionValue::Primitive {
+            value: PrimitiveValue::Number(FloatValue::new(1.0)),
+            loc: None,
+        },
+    )?;
+    let updated = lower_value_to_temporary(
+        builder,
+        InstructionValue::BinaryExpression {
+            operator: binary_op,
+            left: prev_value.clone(),
+            right: one,
+            loc: loc.clone(),
+        },
+    )?;
+    lower_value_to_temporary(
+        builder,
+        InstructionValue::StoreContext {
+            lvalue: LValue {
+                kind: InstructionKind::Reassign,
+                place,
+            },
+            value: updated.clone(),
+            loc,
+        },
+    )?;
+    let result_place = if update.prefix { updated } else { prev_value };
+    Ok(InstructionValue::LoadLocal {
+        place: result_place.clone(),
+        loc: result_place.loc.clone(),
+    })
+}
+
 fn lower_value_to_temporary(
     builder: &mut HirBuilder,
     value: InstructionValue,
@@ -1032,6 +1111,9 @@ fn lower_expression(
                 Expression::Identifier(ident) => {
                     let start = ident.base.start.unwrap_or(0);
                     if builder.is_context_identifier(&ident.name, start, ident.base.node_id) {
+                        if builder.environment().config.enable_state_variables {
+                            return lower_context_update_expression(builder, update, ident, loc);
+                        }
                         builder.record_error(CompilerErrorDetail {
                             category: ErrorCategory::Todo,
                             reason: "(BuildHIR::lowerExpression) Handle UpdateExpression to variables captured within lambdas.".to_string(),

@@ -211,6 +211,13 @@ pub struct EnvironmentConfig {
     #[serde(default)]
     pub enable_incremental_list_mapping: bool,
 
+    /// Rust compiler only. A `let` of a component or hook that a function
+    /// reassigns after render is state: the declaration becomes a `useState`
+    /// call and each assignment a call of its setter. See
+    /// `compiler/docs/experiments/0007-state-variables.md`.
+    #[serde(default)]
+    pub enable_state_variables: bool,
+
     /// Rust compiler only. Describe the values of each context a component
     /// reads, so that React only renders it for a change of those values
     /// (requires a React build with `enableContextSelectors` and the
@@ -226,6 +233,15 @@ pub struct EnvironmentConfig {
     /// `compiler/docs/experiments/0004-update-slicing.md`.
     #[serde(default)]
     pub enable_update_slicing: bool,
+
+    /// Rust compiler only, with `enable_context_selectors`. Describe the
+    /// top-level keys of the store state that the inline selector passed to a
+    /// custom hook reads, and register `create` store hooks with their state
+    /// getter, so that React only checks a call's snapshot when one of those
+    /// keys changed (requires a React build with `enableSelectorReads`). See
+    /// `compiler/docs/experiments/0008-selector-reads.md`.
+    #[serde(default)]
+    pub enable_selector_reads: bool,
 
     /// Rust compiler only. Wrap JSX subtrees that look static in
     /// `unstable_StaticIsland`, so that React leaves them dehydrated when the
@@ -282,8 +298,10 @@ impl Default for EnvironmentConfig {
             enable_jsx_blocks: false,
             enable_list_item_memoization: false,
             enable_incremental_list_mapping: false,
+            enable_state_variables: false,
             enable_context_selectors: false,
             enable_update_slicing: false,
+            enable_selector_reads: false,
             enable_static_islands: false,
             custom_macros: None,
         }

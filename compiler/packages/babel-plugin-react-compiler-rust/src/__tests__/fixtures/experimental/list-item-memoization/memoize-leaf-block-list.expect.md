@@ -114,7 +114,7 @@ function Table(t0) {
     t1 = (item) => {
       const t5 = item.id;
       const item$0 = item;
-      const selected = _listItemCache.is(0, item.id);
+      const selected = _listItemCache.matchesSelection(0, item.id);
       const onSelect$0 = onSelect;
       const t6 = selected ? "danger" : "";
       const t7 = item$0.id;
