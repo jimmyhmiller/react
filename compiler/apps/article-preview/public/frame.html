@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font: 14px system-ui;
+        margin: 16px;
+      }
+      main {
+        padding: 0;
+      }
+      button {
+        border: 1px solid #b8b9be;
+        border-radius: 6px;
+        padding: 8px 12px;
+        background: #fff;
+        cursor: pointer;
+      }
+      ul {
+        max-height: 260px;
+        overflow: auto;
+        border: 1px solid #ddd;
+        padding: 12px 12px 12px 36px;
+      }
+      li {
+        padding: 2px 0;
+      }
+      li:nth-child(even) {
+        background: #f8f8f8;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script id="bundle"></script>
+    <script>
+      const q = new URLSearchParams(location.search);
+      document.getElementById('bundle').src =
+        `/bundle/${q.get('id')}/${q.get('variant')}.js?r=${q.get('r')}`;
+    </script>
+  </body>
+</html>

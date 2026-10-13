@@ -1,0 +1,14 @@
+{
+  "name": "react-article-preview",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs"
+  },
+  "dependencies": {
+    "marked": "^16.3.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zustand": "^5.0.15"
+  }
+}
