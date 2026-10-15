@@ -737,3 +737,66 @@ test('a function with state variables is never left uncompiled', () => {
     /Cannot skip the compilation of a function with state variables/
   );
 });
+
+test('the compatibility runtime copies own __proto__ and symbol properties safely', () => {
+  const {
+    unstable_copyForUpdate: copyForUpdate,
+  } = require('react-compiler-runtime');
+  const key = Symbol('value');
+  const original = JSON.parse('{"__proto__":{"injected":true}}');
+  original[key] = 1;
+  Object.freeze(original);
+  const copy = copyForUpdate(original);
+  assert.equal(Object.getPrototypeOf(copy), Object.prototype);
+  assert.equal(Object.hasOwn(copy, '__proto__'), true);
+  assert.equal(copy.injected, undefined);
+  assert.equal(copy[key], 1);
+  copy[key] = 2;
+  assert.equal(original[key], 1);
+});
+
+test('function-valued state is stored without invoking it', async () => {
+  let calls = 0;
+  const first = () => {
+    calls++;
+    return 'first';
+  };
+  const second = () => {
+    calls++;
+    return 'second';
+  };
+  const {FunctionState} = load(`
+    export function FunctionState({initial, next}) {
+      let value = initial;
+      return <button onClick={() => { value = next; }}>{typeof value}</button>;
+    }
+  `);
+  const container = await render(
+    h(FunctionState, {initial: first, next: second})
+  );
+  const button = container.querySelector('button');
+  assert.equal(button.textContent, 'function');
+  assert.equal(calls, 0);
+  await click(button);
+  assert.equal(button.textContent, 'function');
+  assert.equal(calls, 0);
+});
+
+test('function assignments capture the value before a later local reassignment', async () => {
+  const first = () => 'first';
+  const second = () => 'second';
+  const {FunctionState} = load(`
+    export function FunctionState({first, second}) {
+      let value = null;
+      return <button onClick={() => {
+        let next = first;
+        value = next;
+        next = second;
+      }}>{value === first ? 'first' : 'other'}</button>;
+    }
+  `);
+  const container = await render(h(FunctionState, {first, second}));
+  const button = container.querySelector('button');
+  await click(button);
+  assert.equal(button.textContent, 'first');
+});

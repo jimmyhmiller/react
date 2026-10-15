@@ -1,6 +1,5 @@
 import {createRequire} from 'node:module';
 import {createServer} from 'node:http';
-import {homedir} from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -8,19 +7,15 @@ import {Marked} from 'marked';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const compilerRoot = path.resolve(root, '../..');
-const inliningCompilerRoot = path.resolve(
-  compilerRoot,
-  '../../unsafe-map-inline-demo/compiler'
-);
 // This repository's experimental React build, which has the compiled blocks
 // runtime (see README.md). Every variant uses it, so the same label means the
 // same build in every widget.
 const localReact = path.resolve(compilerRoot, '../build/node_modules');
-const defaultArticle = path.join(
-  homedir(),
-  'Documents/Code/PlayGround/writings/What Does the React Compiler Even Do.md'
-);
-const articlePath = path.resolve(process.argv[2] ?? defaultArticle);
+if (process.argv[2] === undefined) {
+  console.error('Usage: node server.mjs <article.md>');
+  process.exit(1);
+}
+const articlePath = path.resolve(process.argv[2]);
 const port = Number(process.env.PORT ?? 4177);
 const requireCompiler = createRequire(path.join(compilerRoot, 'package.json'));
 const babel = requireCompiler('@babel/core');
@@ -29,9 +24,6 @@ const esbuild = requireCompiler('esbuild');
 const rustPlugin = requireCompiler(
   './packages/babel-plugin-react-compiler-rust/dist/index.js'
 ).default;
-const inliningPlugin = createRequire(
-  path.join(inliningCompilerRoot, 'package.json')
-)('./packages/babel-plugin-react-compiler-rust/dist/index.js').default;
 const marked = new Marked({gfm: true});
 const variants = [
   {id: 'plain', label: 'Compiler off', environment: null},
@@ -40,14 +32,12 @@ const variants = [
     id: 'inlining',
     label: 'Inlining',
     environment: {enableComponentInlining: true},
-    plugin: inliningPlugin,
   },
   {id: 'blocks', label: 'Blocks', environment: {enableJsxBlocks: true}},
   {
     id: 'inlining-blocks',
     label: 'Inlining + blocks',
     environment: {enableComponentInlining: true, enableJsxBlocks: true},
-    plugin: inliningPlugin,
   },
   {
     id: 'inlining-blocks-lists',
@@ -57,7 +47,6 @@ const variants = [
       enableJsxBlocks: true,
       enableListItemMemoization: true,
     },
-    plugin: inliningPlugin,
   },
   {
     id: 'inlining-blocks-lists-incremental',
@@ -68,7 +57,6 @@ const variants = [
       enableListItemMemoization: true,
       enableIncrementalListMapping: true,
     },
-    plugin: inliningPlugin,
   },
   {
     id: 'inlining-all',
@@ -80,7 +68,6 @@ const variants = [
       enableIncrementalListMapping: true,
       enableContextSelectors: true,
     },
-    plugin: inliningPlugin,
   },
 ];
 const variantsById = new Map(variants.map(variant => [variant.id, variant]));
@@ -237,7 +224,7 @@ function compile(source, variant, id) {
       ? []
       : [
           [
-            variant.plugin ?? rustPlugin,
+            rustPlugin,
             {
               target: '19',
               compilationMode: 'infer',

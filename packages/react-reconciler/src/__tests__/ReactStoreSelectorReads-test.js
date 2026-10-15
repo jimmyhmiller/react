@@ -108,6 +108,62 @@ describe('selector reads', () => {
   const uncheckedCalls = __DEV__ ? 1 : 0;
 
   // @gate enableContextSelectors && enableSelectorReads
+  it('tracks symbol, non-enumerable, and inherited reads', async () => {
+    const symbol = Symbol('value');
+    const cases = [
+      [symbol, {[symbol]: 0}, {[symbol]: 1}],
+      [
+        'hidden',
+        Object.defineProperty({}, 'hidden', {value: 0}),
+        Object.defineProperty({}, 'hidden', {value: 1}),
+      ],
+      ['toString', {}, Object.create(null)],
+    ];
+    for (let i = 0; i < cases.length; i++) {
+      const [key, initial, next] = cases[i];
+      const store = createStore(initial);
+      registerStoreHook(store.useStore, store.api.getState);
+      const select = state => String(state[key]);
+      const Read = () => useSelected(store.useStore, null, [key], select);
+      const root = ReactNoop.createRoot();
+      await act(() => root.render(<Read />));
+      expect(root).toMatchRenderedOutput(String(initial[key]));
+      await act(() => store.api.setState(next, true));
+      expect(root).toMatchRenderedOutput(String(next[key]));
+      await act(() => root.render(null));
+    }
+  });
+
+  // @gate enableContextSelectors && enableSelectorReads
+  it('lets the snapshot handle throwing property getters', async () => {
+    const store = createStore({value: 'initial'});
+    registerStoreHook(store.useStore, store.api.getState);
+    const select = state => {
+      try {
+        return state.value;
+      } catch {
+        return 'unavailable';
+      }
+    };
+    function Read() {
+      return useSelected(store.useStore, null, ['value'], select);
+    }
+    const root = ReactNoop.createRoot();
+    await act(() => root.render(<Read />));
+    await act(() =>
+      store.api.setState(
+        {
+          get value() {
+            throw new Error('Unavailable');
+          },
+        },
+        true,
+      ),
+    );
+    expect(root).toMatchRenderedOutput('unavailable');
+  });
+
+  // @gate enableContextSelectors && enableSelectorReads
   it('only checks the calls whose selectors read a changed key', async () => {
     const store = createStore({a: 0, b: 0});
     registerStoreHook(store.useStore, store.api.getState);

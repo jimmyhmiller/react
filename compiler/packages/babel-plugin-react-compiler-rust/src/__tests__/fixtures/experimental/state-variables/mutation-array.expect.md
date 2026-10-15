@@ -62,7 +62,8 @@ function Todos() {
   let t1;
   if ($[1] === Symbol.for("react.memo_cache_sentinel")) {
     t1 = (e) => {
-      setText(e.target.value);
+      const t2 = e.target.value;
+      setText(() => t2);
     };
     $[1] = t1;
   } else {

@@ -46,91 +46,102 @@ import { c as _c, unstable_freezeState } from "react/compiler-runtime"; // @enab
 // Several state variables, written by handlers declared in the component and
 // in a rendered list.
 function Todos(t0) {
-  const $ = _c(15);
+  const $ = _c(17);
   const { initial } = t0;
   const [text, setText] = useState("");
   unstable_freezeState(text);
-  const [todos, setTodos] = useState(initial);
+  const t1 = initial;
+  let t2;
+  if ($[0] !== t1) {
+    t2 = () => t1;
+    $[0] = t1;
+    $[1] = t2;
+  } else {
+    t2 = $[1];
+  }
+  const [todos, setTodos] = useState(t2);
   unstable_freezeState(todos);
-  let t1;
-  if ($[0] !== text) {
-    t1 = () => {
+  let t3;
+  if ($[2] !== text) {
+    t3 = () => {
       setTodos((todos$0) => [...todos$0, { id: todos$0.length, title: text }]);
       setText("");
     };
-    $[0] = text;
-    $[1] = t1;
+    $[2] = text;
+    $[3] = t3;
   } else {
-    t1 = $[1];
+    t3 = $[3];
   }
-  const add = t1;
-  let t2;
-  if ($[2] === Symbol.for("react.memo_cache_sentinel")) {
-    t2 = (e) => {
-      setText(e.target.value);
-    };
-    $[2] = t2;
-  } else {
-    t2 = $[2];
-  }
-  let t3;
-  if ($[3] !== text) {
-    t3 = <input value={text} onChange={t2} />;
-    $[3] = text;
-    $[4] = t3;
-  } else {
-    t3 = $[4];
-  }
+  const add = t3;
   let t4;
-  if ($[5] !== add) {
-    t4 = <button onClick={add}>Add</button>;
-    $[5] = add;
-    $[6] = t4;
+  if ($[4] === Symbol.for("react.memo_cache_sentinel")) {
+    t4 = (e) => {
+      const t5 = e.target.value;
+      setText(() => t5);
+    };
+    $[4] = t4;
   } else {
-    t4 = $[6];
+    t4 = $[4];
   }
   let t5;
-  if ($[7] !== todos) {
-    t5 = todos.map((todo) => (
+  if ($[5] !== text) {
+    t5 = <input value={text} onChange={t4} />;
+    $[5] = text;
+    $[6] = t5;
+  } else {
+    t5 = $[6];
+  }
+  let t6;
+  if ($[7] !== add) {
+    t6 = <button onClick={add}>Add</button>;
+    $[7] = add;
+    $[8] = t6;
+  } else {
+    t6 = $[8];
+  }
+  let t7;
+  if ($[9] !== todos) {
+    t7 = todos.map((todo) => (
       <li
         key={todo.id}
         onClick={() => {
-          setTodos(todos.filter((other) => other !== todo));
+          const t8 = todos.filter((other) => other !== todo);
+          setTodos(() => t8);
         }}
       >
         {todo.title}
       </li>
     ));
-    $[7] = todos;
-    $[8] = t5;
+    $[9] = todos;
+    $[10] = t7;
   } else {
-    t5 = $[8];
+    t7 = $[10];
   }
-  let t6;
-  if ($[9] !== t5) {
-    t6 = <ul>{t5}</ul>;
-    $[9] = t5;
-    $[10] = t6;
+  let t8;
+  if ($[11] !== t7) {
+    t8 = <ul>{t7}</ul>;
+    $[11] = t7;
+    $[12] = t8;
   } else {
-    t6 = $[10];
+    t8 = $[12];
   }
-  let t7;
-  if ($[11] !== t3 || $[12] !== t4 || $[13] !== t6) {
-    t7 = (
+  let t9;
+  if ($[13] !== t5 || $[14] !== t6 || $[15] !== t8) {
+    t9 = (
       <>
-        {t3}
-        {t4}
+        {t5}
         {t6}
+        {t8}
       </>
     );
-    $[11] = t3;
-    $[12] = t4;
-    $[13] = t6;
-    $[14] = t7;
+    $[13] = t5;
+    $[14] = t6;
+    $[15] = t8;
+    $[16] = t9;
   } else {
-    t7 = $[14];
+    t9 = $[16];
   }
-  return t7;
+  return t9;
 }
 
 export const FIXTURE_ENTRYPOINT = {

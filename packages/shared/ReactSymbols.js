@@ -53,6 +53,7 @@ export const REACT_MEMO_CACHE_SENTINEL: symbol = Symbol.for(
 // A property of a list produced by unstable_useListItemMemoCache's `map`,
 // describing which items differ from the list it produced before.
 export const REACT_LIST_CHANGES: symbol = Symbol.for('react.list_changes');
+export const REACT_LIST_IDENTITY: symbol = Symbol.for('react.list_identity');
 
 // Returned by the dispatcher's unstable_skipStoreHook when a store hook call
 // must be made (enableUpdateSlicing).

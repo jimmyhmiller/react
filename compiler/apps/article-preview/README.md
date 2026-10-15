@@ -8,10 +8,10 @@ From this directory:
 
 ```sh
 npm install
-npm run dev
+npm run dev -- /absolute/path/to/draft.md
 ```
 
-Open <http://127.0.0.1:4177>. The default draft is `~/Documents/Code/PlayGround/writings/What Does the React Compiler Even Do.md`. Pass a different Markdown path to `node server.mjs /absolute/path/to/draft.md`; set `PORT` to use another local port.
+Open <http://127.0.0.1:4177>. Pass the Markdown path explicitly; the preview has no machine-specific default. Set `PORT` to use another local port.
 
 Every build runs on this repository's experimental React build in `<repo>/build/node_modules`, which has the compiled blocks runtime, so the same label means the same build in every widget. Build it from the repository root with:
 
@@ -21,7 +21,7 @@ RELEASE_CHANNEL=experimental node scripts/rollup/build.js \
   --type=NODE_PROD
 ```
 
-“Compiler off”, “React Compiler” and “Blocks” use this worktree's Rust Babel plugin. “Inlining” and “Inlining + blocks” use the separate `.worktrees/unsafe-map-inline-demo` Rust plugin build, which inlines components into `.map` callbacks. Both native plugins and their TypeScript wrappers must be built. If either compiler changes, rebuild the corresponding native package and wrapper before restarting the preview.
+All optimized variants use this checkout's Rust Babel plugin. Build its native module and TypeScript wrapper with `yarn snap --rust` from `compiler/`, and restart the preview after rebuilding. Inlining follows the safety checks implemented on this branch; the preview does not load an alternate compiler from another worktree.
 
 ## Add an example
 

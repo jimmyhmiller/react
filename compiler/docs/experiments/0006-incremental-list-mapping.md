@@ -100,9 +100,9 @@ The pass runs in client output mode only, and only when the runtime module is
    from both ends:
 
 ```js
-while (prefix < sharedLength && previousArray[prefix] === array[prefix]) prefix++;
+while (prefix < sharedLength && Object.is(previousArray[prefix], array[prefix])) prefix++;
 while (suffix < sharedLength - prefix &&
-       previousArray[previousLength - 1 - suffix] === array[length - 1 - suffix]) suffix++;
+       Object.is(previousArray[previousLength - 1 - suffix], array[length - 1 - suffix])) suffix++;
 ```
 
 Results for the common prefix and the common suffix are copied from the
@@ -118,8 +118,10 @@ the new items are mapped.
 
 - **Index and array.** A one-parameter callback receives neither, so a result
   that was correct at one position is correct at another.
-- **The item.** Reuse requires `===` on the item itself. Render being pure,
-  the same item produces the same output.
+- **The item.** Reuse requires `Object.is` on the item itself, and the same
+  presence or absence of a sparse-array entry. This distinguishes positive
+  and negative zero, which can produce different results in the callback.
+  Render being pure, the same item produces the same output.
 - **Captured values.** A callback that captures a changed value is a new
   closure (its own memo scope in the component invalidates), so
   `mapped.callback !== callback` and everything is mapped again.

@@ -24,6 +24,9 @@ const SPROUT_SEPARATOR = '\n### Eval output\n';
  * whitespace-only differences don't cause test failures.
  */
 export function normalizeCodeBlankLines(snapshot: string): string {
+  // The reporter historically appends spaces after the final Markdown fence.
+  // Ignore that document padding without changing whitespace inside source.
+  snapshot = snapshot.trimEnd();
   const codeStart = snapshot.indexOf('## Code\n');
   if (codeStart === -1) return snapshot;
   const codeBlockStart = snapshot.indexOf('```javascript\n', codeStart);

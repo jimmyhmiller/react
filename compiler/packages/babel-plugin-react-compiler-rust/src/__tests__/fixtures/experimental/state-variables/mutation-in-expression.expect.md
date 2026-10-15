@@ -35,7 +35,8 @@ function Selection(t0) {
   const { id, enabled } = t0;
   let t1;
   if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
-    t1 = new Set();
+    const t2 = new Set();
+    t1 = () => t2;
     $[0] = t1;
   } else {
     t1 = $[0];

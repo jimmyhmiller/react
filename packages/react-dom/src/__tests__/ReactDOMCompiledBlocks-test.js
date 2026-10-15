@@ -1733,6 +1733,7 @@ describe('ReactDOMCompiledBlocks', () => {
       // unstable_useListItemMemoCache's `map` returns a copy of its previous
       // result with some items replaced, and records them.
       const LIST_CHANGES = Symbol.for('react.list_changes');
+      const listIdentity = require('shared/ReactListIdentity').default;
       function replaceItems(base, replacements) {
         const list = base.slice();
         const indices = [];
@@ -1741,7 +1742,7 @@ describe('ReactDOMCompiledBlocks', () => {
           list[index] = item;
           indices.push(index);
         }
-        list[LIST_CHANGES] = {base, indices};
+        list[LIST_CHANGES] = {base: listIdentity(base), indices};
         return list;
       }
       // Counts the items a renderer reads.
@@ -1851,6 +1852,7 @@ describe('ReactDOMCompiledBlocks', () => {
     // @gate enableCompiledBlocks
     it('gives a fiber to a replaced item that needs one', async () => {
       const LIST_CHANGES = Symbol.for('react.list_changes');
+      const listIdentity = require('shared/ReactListIdentity').default;
       // <li data-key={0}><b>{1}</b></li>
       const itemTemplate = ReactDOM.unstable_createBlockTemplate([
         'li',
@@ -1891,7 +1893,7 @@ describe('ReactDOMCompiledBlocks', () => {
 
       const second = first.slice();
       second[3] = item(4, true, true);
-      second[LIST_CHANGES] = {base: first, indices: [3]};
+      second[LIST_CHANGES] = {base: listIdentity(first), indices: [3]};
       await renderBoth(
         block(listTemplate, [second]),
         <ul>{ids.map(id => item(id, id === 4, false))}</ul>,
@@ -1904,7 +1906,7 @@ describe('ReactDOMCompiledBlocks', () => {
       const third = second.slice();
       third[1] = item(2, true, true);
       third[3] = item(4, false, true);
-      third[LIST_CHANGES] = {base: second, indices: [1, 3]};
+      third[LIST_CHANGES] = {base: listIdentity(second), indices: [1, 3]};
       await renderBoth(
         block(listTemplate, [third]),
         <ul>{ids.map(id => item(id, id === 2, false))}</ul>,

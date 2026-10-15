@@ -48,15 +48,17 @@ function Pair() {
       let currentA = a;
       const t = currentA;
       currentA = b;
-      setA(currentA);
-      setB(t);
+      const t2 = currentA;
+      setA(() => t2);
+      const t3 = t;
+      setB(() => t3);
       return currentA;
     };
     t1 = () => {
       let currentA2 = a;
-      const t2 = b * 2;
-      currentA2 = currentA2 + t2;
-      setA((a$0) => a$0 + t2);
+      const t4 = b * 2;
+      currentA2 = currentA2 + t4;
+      setA((a$0) => a$0 + t4);
       return currentA2;
     };
     $[0] = a;

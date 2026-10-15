@@ -44,14 +44,23 @@ import {
 // the built-in collections declare as read-only (`forEach`) is not, and neither
 // is a call whose result is used (`slice`).
 function List(t0) {
-  const $ = _c(8);
+  const $ = _c(10);
   const { initial, log } = t0;
-  const [items, setItems] = useState(initial);
-  unstable_freezeState(items);
-  let t1;
+  const t1 = initial;
   let t2;
-  if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
-    t1 = (
+  if ($[0] !== t1) {
+    t2 = () => t1;
+    $[0] = t1;
+    $[1] = t2;
+  } else {
+    t2 = $[1];
+  }
+  const [items, setItems] = useState(t2);
+  unstable_freezeState(items);
+  let t3;
+  let t4;
+  if ($[2] === Symbol.for("react.memo_cache_sentinel")) {
+    t3 = (
       <button
         onClick={() => {
           setItems(_temp);
@@ -60,7 +69,7 @@ function List(t0) {
         remove
       </button>
     );
-    t2 = (
+    t4 = (
       <button
         onClick={() => {
           setItems(_temp2);
@@ -69,15 +78,15 @@ function List(t0) {
         sort
       </button>
     );
-    $[0] = t1;
-    $[1] = t2;
+    $[2] = t3;
+    $[3] = t4;
   } else {
-    t1 = $[0];
-    t2 = $[1];
+    t3 = $[2];
+    t4 = $[3];
   }
-  let t3;
-  if ($[2] !== items || $[3] !== log) {
-    t3 = (
+  let t5;
+  if ($[4] !== items || $[5] !== log) {
+    t5 = (
       <button
         onClick={() => {
           items.forEach((item) => log(item));
@@ -88,29 +97,29 @@ function List(t0) {
         log
       </button>
     );
-    $[2] = items;
-    $[3] = log;
-    $[4] = t3;
+    $[4] = items;
+    $[5] = log;
+    $[6] = t5;
   } else {
-    t3 = $[4];
+    t5 = $[6];
   }
-  let t4;
-  if ($[5] !== items.length || $[6] !== t3) {
-    t4 = (
+  let t6;
+  if ($[7] !== items.length || $[8] !== t5) {
+    t6 = (
       <>
-        {t1}
-        {t2}
         {t3}
+        {t4}
+        {t5}
         {items.length}
       </>
     );
-    $[5] = items.length;
-    $[6] = t3;
-    $[7] = t4;
+    $[7] = items.length;
+    $[8] = t5;
+    $[9] = t6;
   } else {
-    t4 = $[7];
+    t6 = $[9];
   }
-  return t4;
+  return t6;
 }
 function _temp2(items) {
   const t0 = unstable_copyForUpdate(items);

@@ -43,9 +43,12 @@ function Swap() {
       let currentA = a;
       const [t1, t2] = [b, currentA];
       currentA = t1;
-      setA(currentA);
-      setB(t2);
-      setC(currentA);
+      const t3 = currentA;
+      setA(() => t3);
+      const t4 = t2;
+      setB(() => t4);
+      const t5 = currentA;
+      setC(() => t5);
     };
     $[0] = a;
     $[1] = b;

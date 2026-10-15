@@ -113,12 +113,14 @@ The setter is named `set` + the capitalized name, or that with a number if the
 name is taken (by any binding of the file, or a global that the function
 references: `let timeout` must not shadow `setTimeout`).
 
-The initializer is **not** wrapped in a function (`useState(() => init)`), as
-the design proposed. It is evaluated on every render like any other expression
-of the component, which the compiler memoizes like any other: `[]` is
-allocated once, `expensive(props.a)` is recomputed when `props.a` changes, and
-its value is ignored after the mount. Wrapping would require moving arbitrary
-HIR (several blocks for a conditional initializer) into a function.
+The initializer expression is evaluated during render, which the compiler
+memoizes like any other expression: `[]` is allocated once, and
+`expensive(props.a)` is recomputed when `props.a` changes. Its value is ignored
+after mounting. When that value might be a function, the compiler captures it
+and passes `() => capturedValue` to `useState`. This stores the function
+without calling it, while preserving the evaluation order of the initializer.
+Direct assignments use the same wrapper when the assigned value might be a
+function; generated updater functions remain ordinary React updaters.
 
 Hook order is declaration order, so a state variable's declaration must run
 unconditionally: at the top level of the function body, before any early
@@ -452,19 +454,22 @@ Nothing is fed to the other experiments yet.
 
 ## Tests
 
-- 36 fixtures in
+- Fixtures in
   `packages/babel-plugin-react-compiler-rust/src/__tests__/fixtures/experimental/state-variables/`
-  (`yarn snap --rust --experimental -p 'state-variables/*'`), 10 of them
+  (`yarn snap --rust --experimental -p 'state-variables/*'`), including
   `error.` fixtures. They are not evaluated by snap, whose React does not have
   the runtime functions.
-- `scripts/test-state-variables.mjs` (`node --test`): 24 behavior tests that
+- `scripts/test-state-variables.mjs` (`node --test`): behavior tests that
   compile components with the Rust plugin, render them with React DOM and fire
   events: updates, composition of updates within and across calls, handlers
   that do not change, an effect's interval, a custom hook, async, nested
   closures, lists, destructuring, the value of an assignment, StrictMode,
   mutations (arrays, objects, Map, Set, unknown methods, structural sharing,
   the previous state left unmodified), aliases, a value that cannot be copied,
-  the development freeze, and the fatal errors under `panicThreshold: 'none'`.
+  the development freeze, function-valued initializers and assignments, safe
+  property copying, and the fatal errors under `panicThreshold: 'none'`.
+- `scripts/test-plugin-reuse.mjs`: compilation of multiple files through the
+  same Babel configuration, including a non-React file before a component.
 - `packages/react-reconciler/src/__tests__/compilerStateVariables-test.js`: the
   two runtime functions, in development and production.
 

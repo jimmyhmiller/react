@@ -124,9 +124,8 @@ import {
 
 import getComponentNameFromFiber from 'react-reconciler/src/getComponentNameFromFiber';
 import is from 'shared/objectIs';
-import hasOwnProperty from 'shared/hasOwnProperty';
-import {checkKeyStringCoercion} from 'shared/CheckStringCoercion';
 import isArray from 'shared/isArray';
+import {checkKeyStringCoercion} from 'shared/CheckStringCoercion';
 import {
   markWorkInProgressReceivedUpdate,
   checkIfWorkInProgressReceivedUpdate,
@@ -2090,7 +2089,7 @@ type SharedStoreSubscription = {
   // those whose keys are unknown, and the number of notifications.
   getState: null | (() => mixed),
   state: mixed,
-  subscribersByKey: Map<string, Set<SharedStoreSubscriber>>,
+  subscribersByKey: Map<string | symbol, Set<SharedStoreSubscriber>>,
   unindexedSubscribers: Set<SharedStoreSubscriber>,
   notifications: number,
 };
@@ -2170,6 +2169,16 @@ function subscribeToSharedStore<T>(
   return () => unsubscribeFromSharedStore(shared, subscriber);
 }
 
+function getStoreReadKey(read: mixed): string | symbol {
+  if (typeof read === 'symbol') {
+    return read;
+  }
+  if (__DEV__) {
+    checkKeyStringCoercion(read);
+  }
+  return '' + (read as any);
+}
+
 function indexSharedStoreSubscriber(subscriber: SharedStoreSubscriber): void {
   const subscription = subscriber.subscription;
   const reads = subscriber.inst.reads;
@@ -2182,10 +2191,7 @@ function indexSharedStoreSubscriber(subscriber: SharedStoreSubscriber): void {
   const subscribersByKey = subscription.subscribersByKey;
   for (let i = 0; i < reads.length; i++) {
     const read = reads[i];
-    if (__DEV__) {
-      checkKeyStringCoercion(read);
-    }
-    const key = '' + (read as any);
+    const key = getStoreReadKey(read);
     let subscribers = subscribersByKey.get(key);
     if (subscribers === undefined) {
       subscribers = new Set();
@@ -2210,10 +2216,7 @@ function unindexSharedStoreSubscriber(subscriber: SharedStoreSubscriber): void {
   const subscribersByKey = subscription.subscribersByKey;
   for (let i = 0; i < reads.length; i++) {
     const read = reads[i];
-    if (__DEV__) {
-      checkKeyStringCoercion(read);
-    }
-    const key = '' + (read as any);
+    const key = getStoreReadKey(read);
     const subscribers = subscribersByKey.get(key);
     if (subscribers !== undefined) {
       subscribers.delete(subscriber);
@@ -2254,36 +2257,31 @@ function isPlainObject(value: mixed): boolean {
   return prototype === Object.prototype || prototype === null;
 }
 
-// The top-level keys whose values differ between two states, or null if they
-// cannot be compared key by key.
+// Compare the properties subscribers actually read. Enumerating the state
+// would miss symbols, non-enumerable properties, and inherited values.
 function getChangedStoreKeys(
+  subscription: SharedStoreSubscription,
   previous: mixed,
   next: mixed,
-): null | Array<string> {
-  if (previous === next || !isPlainObject(previous) || !isPlainObject(next)) {
+): null | Array<string | symbol> {
+  try {
+    if (previous === next || !isPlainObject(previous) || !isPlainObject(next)) {
+      return null;
+    }
+    const previousState: any = previous;
+    const nextState: any = next;
+    const changed = [];
+    subscription.subscribersByKey.forEach((subscribers, key) => {
+      if (!is(previousState[key], nextState[key])) {
+        changed.push(key);
+      }
+    });
+    return changed;
+  } catch (error) {
+    // A property getter can throw. Let the normal snapshot checks schedule
+    // a render, where React can handle the error through an error boundary.
     return null;
   }
-  const previousState: {+[string]: mixed} = previous as any;
-  const nextState: {+[string]: mixed} = next as any;
-  const changed = [];
-  for (const key in nextState) {
-    if (
-      hasOwnProperty.call(nextState, key) &&
-      (!hasOwnProperty.call(previousState, key) ||
-        !is(previousState[key], nextState[key]))
-    ) {
-      changed.push(key);
-    }
-  }
-  for (const key in previousState) {
-    if (
-      hasOwnProperty.call(previousState, key) &&
-      !hasOwnProperty.call(nextState, key)
-    ) {
-      changed.push(key);
-    }
-  }
-  return changed;
 }
 
 function checkSharedStoreSubscriber(subscriber: SharedStoreSubscriber): void {
@@ -2320,7 +2318,11 @@ function notifySharedStore(subscription: SharedStoreSubscription): void {
     if (enableSelectorReads) {
       const previousState = subscription.state;
       if (readSharedStoreState(subscription)) {
-        changedKeys = getChangedStoreKeys(previousState, subscription.state);
+        changedKeys = getChangedStoreKeys(
+          subscription,
+          previousState,
+          subscription.state,
+        );
       }
     }
     if (changedKeys === null) {

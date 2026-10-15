@@ -210,7 +210,6 @@ export function buildRust(): boolean {
 
   // Copy the built native module to the babel plugin package
   const platform = process.platform;
-  const ext = platform === 'darwin' ? 'dylib' : 'so';
   const libName =
     platform === 'darwin'
       ? 'libreact_compiler_napi.dylib'
@@ -218,14 +217,21 @@ export function buildRust(): boolean {
   const sourcePath = path.join(compilerRoot, 'target', 'debug', libName);
   const destPath = path.join(BABEL_PLUGIN_RUST_ROOT, 'native', 'index.node');
 
+  // Replace the file atomically. Overwriting a loaded native module in place
+  // can invalidate its executable pages (and code signature on macOS) in
+  // another compiler process using the same checkout.
+  const temporaryPath = `${destPath}.${process.pid}.tmp`;
   try {
-    fs.copyFileSync(sourcePath, destPath);
+    fs.copyFileSync(sourcePath, temporaryPath);
+    fs.renameSync(temporaryPath, destPath);
   } catch (e) {
     console.error(
       `Failed to copy native module (${sourcePath} -> ${destPath}):`,
       e,
     );
     return false;
+  } finally {
+    fs.rmSync(temporaryPath, {force: true});
   }
 
   // Build the TypeScript wrapper

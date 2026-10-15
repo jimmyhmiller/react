@@ -430,7 +430,10 @@ t2 = _listItemCache.map(items, t1, [selectedId]);   // was: items.map(t1)
   miss one. Duplicate comparands (a selected group) recompute every matching
   item.
 - The copy records `{base, indices}` under `Symbol.for('react.list_changes')`.
-  React DOM uses it only if `base` is the list it committed and every replaced
+  `base` is a symbol token stored non-enumerably on the previous array, rather
+  than a reference to it: retaining the array would retain the entire chain
+  of past results. The token is shared across separately built runtime bundles. React DOM uses it only if `base` identifies the list it
+  committed and every replaced
   item has the key and type of the item it replaces
   (`getBlockListChanges`); otherwise the list is reconciled as usual. The
   slot is then classified, checked for items that need fibers, and updated by
@@ -473,3 +476,9 @@ item that needs one", and the fixtures under
 - End to end: `compiler/apps/todomvc-benchmark/scripts/verify.mjs` runs every
   benchmark workload in every variant and compares the DOM after each step with
   the uncompiled app.
+
+- Production bundle integration: after building this checkout's React, React
+  DOM and compiler runtime into `build/node_modules`, run
+  `node --test compiler/scripts/test-list-runtime-bundles.mjs` from the root.
+  This checks both rendered output and that a selection update reads only the
+  changed items across separately bundled runtime modules.

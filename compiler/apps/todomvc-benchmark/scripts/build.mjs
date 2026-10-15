@@ -38,20 +38,13 @@ const presetReact = path.join(
 );
 // Framework packages are installed in this directory.
 const requireFromApp = createRequire(path.join(ROOT, 'package.json'));
-// `compiler.plugin` selects the Rust Babel plugin build: this worktree's, or
-// 'map-inlining', the build of the .worktrees/unsafe-map-inline-demo worktree,
-// whose component inlining also inlines components into .map callbacks.
-const rustPluginPaths = {
-  default: path.join(
+// Every variant uses the compiler built from this checkout.
+const rustPlugin = require(
+  path.join(
     COMPILER_ROOT,
     'packages/babel-plugin-react-compiler-rust/dist/index.js'
-  ),
-  'map-inlining': path.join(
-    REPO_ROOT,
-    '..',
-    'unsafe-map-inline-demo/compiler/packages/babel-plugin-react-compiler-rust/dist/index.js'
-  ),
-};
+  )
+).default;
 
 function compileApp(variant, app) {
   return compileModule(variant, path.join(ROOT, 'src', app.source));
@@ -62,14 +55,6 @@ function compileModule(variant, filename) {
   const events = [];
   const plugins = [];
   if (variant.compiler !== null) {
-    const rustPluginPath =
-      rustPluginPaths[variant.compiler.plugin ?? 'default'];
-    if (rustPluginPath === undefined) {
-      throw new Error(
-        `Variant '${variant.name}' has an unknown compiler plugin '${variant.compiler.plugin}'.`
-      );
-    }
-    const rustPlugin = require(rustPluginPath).default;
     plugins.push([
       rustPlugin,
       {

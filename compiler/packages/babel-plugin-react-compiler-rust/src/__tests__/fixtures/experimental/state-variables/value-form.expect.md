@@ -32,85 +32,98 @@ import { c as _c, unstable_freezeState } from "react/compiler-runtime"; // @enab
 // value: a method call or a function call on the state, a call between the read
 // and the write (which could write the state itself), or no read at all.
 function Editor(t0) {
-  const $ = _c(23);
+  const $ = _c(25);
   const { normalize, initial } = t0;
-  const [text, setText] = useState(initial);
-  unstable_freezeState(text);
-  let t1;
-  if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
-    t1 = [];
-    $[0] = t1;
-  } else {
-    t1 = $[0];
-  }
-  const [tags, setTags] = useState(t1);
-  unstable_freezeState(tags);
+  const t1 = initial;
   let t2;
-  if ($[1] === Symbol.for("react.memo_cache_sentinel")) {
-    t2 = (e) => {
-      setText(e.target.value);
-    };
+  if ($[0] !== t1) {
+    t2 = () => t1;
+    $[0] = t1;
     $[1] = t2;
   } else {
     t2 = $[1];
   }
+  const [text, setText] = useState(t2);
+  unstable_freezeState(text);
   let t3;
+  if ($[2] === Symbol.for("react.memo_cache_sentinel")) {
+    t3 = [];
+    $[2] = t3;
+  } else {
+    t3 = $[2];
+  }
+  const [tags, setTags] = useState(t3);
+  unstable_freezeState(tags);
   let t4;
-  if ($[2] !== text) {
-    t3 = <input value={text} onChange={t2} />;
-    t4 = (
+  if ($[3] === Symbol.for("react.memo_cache_sentinel")) {
+    t4 = (e) => {
+      const t5 = e.target.value;
+      setText(() => t5);
+    };
+    $[3] = t4;
+  } else {
+    t4 = $[3];
+  }
+  let t5;
+  let t6;
+  if ($[4] !== text) {
+    t5 = <input value={text} onChange={t4} />;
+    t6 = (
       <button
         onClick={() => {
-          setText(text.trim());
+          const t7 = text.trim();
+          setText(() => t7);
         }}
       >
         trim
       </button>
     );
-    $[2] = text;
-    $[3] = t3;
-    $[4] = t4;
+    $[4] = text;
+    $[5] = t5;
+    $[6] = t6;
   } else {
-    t3 = $[3];
-    t4 = $[4];
+    t5 = $[5];
+    t6 = $[6];
   }
-  let t5;
-  if ($[5] !== normalize || $[6] !== text) {
-    t5 = (
+  let t7;
+  if ($[7] !== normalize || $[8] !== text) {
+    t7 = (
       <button
         onClick={() => {
-          setText(normalize(text));
+          const t8 = normalize(text);
+          setText(() => t8);
         }}
       >
         normalize
       </button>
     );
-    $[5] = normalize;
-    $[6] = text;
-    $[7] = t5;
+    $[7] = normalize;
+    $[8] = text;
+    $[9] = t7;
   } else {
-    t5 = $[7];
+    t7 = $[9];
   }
-  let t6;
-  if ($[8] !== tags || $[9] !== text) {
-    t6 = (
+  let t8;
+  if ($[10] !== tags || $[11] !== text) {
+    t8 = (
       <button
         onClick={() => {
-          setTags(tags.concat(text));
+          const t9 = tags.concat(text);
+          setTags(() => t9);
         }}
       >
         tag
       </button>
     );
-    $[8] = tags;
-    $[9] = text;
-    $[10] = t6;
+    $[10] = tags;
+    $[11] = text;
+    $[12] = t8;
   } else {
-    t6 = $[10];
+    t8 = $[12];
   }
-  let t7;
-  if ($[11] !== normalize || $[12] !== text) {
-    t7 = (
+  let t9;
+  if ($[13] !== normalize || $[14] !== text) {
+    t9 = (
       <button
         onClick={() => {
           setText(text + normalize(""));
@@ -119,50 +132,50 @@ function Editor(t0) {
         append
       </button>
     );
-    $[11] = normalize;
-    $[12] = text;
-    $[13] = t7;
+    $[13] = normalize;
+    $[14] = text;
+    $[15] = t9;
   } else {
-    t7 = $[13];
+    t9 = $[15];
   }
-  let t8;
-  if ($[14] !== tags) {
-    t8 = tags.join(", ");
-    $[14] = tags;
-    $[15] = t8;
+  let t10;
+  if ($[16] !== tags) {
+    t10 = tags.join(", ");
+    $[16] = tags;
+    $[17] = t10;
   } else {
-    t8 = $[15];
+    t10 = $[17];
   }
-  let t9;
+  let t11;
   if (
-    $[16] !== t3 ||
-    $[17] !== t4 ||
-    $[18] !== t5 ||
-    $[19] !== t6 ||
-    $[20] !== t7 ||
-    $[21] !== t8
+    $[18] !== t10 ||
+    $[19] !== t5 ||
+    $[20] !== t6 ||
+    $[21] !== t7 ||
+    $[22] !== t8 ||
+    $[23] !== t9
   ) {
-    t9 = (
+    t11 = (
       <>
-        {t3}
-        {t4}
         {t5}
         {t6}
         {t7}
         {t8}
+        {t9}
+        {t10}
       </>
     );
-    $[16] = t3;
-    $[17] = t4;
-    $[18] = t5;
-    $[19] = t6;
-    $[20] = t7;
-    $[21] = t8;
-    $[22] = t9;
+    $[18] = t10;
+    $[19] = t5;
+    $[20] = t6;
+    $[21] = t7;
+    $[22] = t8;
+    $[23] = t9;
+    $[24] = t11;
   } else {
-    t9 = $[22];
+    t11 = $[24];
   }
-  return t9;
+  return t11;
 }
 
 ```

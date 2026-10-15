@@ -56,6 +56,7 @@
 import type {Fiber} from 'react-reconciler/src/ReactInternalTypes';
 
 import {REACT_ELEMENT_TYPE, REACT_LIST_CHANGES} from 'shared/ReactSymbols';
+import {readListIdentity} from 'shared/ReactListIdentity';
 import isArray from 'shared/isArray';
 import hasOwnProperty from 'shared/hasOwnProperty';
 
@@ -536,9 +537,11 @@ export function getBlockListChanges(
     return null;
   }
   const changes: mixed = (list as any)[REACT_LIST_CHANGES];
+  const previousIdentity = readListIdentity(previousList);
   if (
     changes == null ||
-    (changes as any).base !== previousList ||
+    previousIdentity === undefined ||
+    (changes as any).base !== previousIdentity ||
     list.length !== previousList.length
   ) {
     return null;

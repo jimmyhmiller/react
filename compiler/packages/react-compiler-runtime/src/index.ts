@@ -119,7 +119,20 @@ export function unstable_copyForUpdate<T>(value: T): T {
   if (typeof value === 'object' && value !== null) {
     const prototype = Object.getPrototypeOf(value);
     if (prototype === Object.prototype || prototype === null) {
-      return Object.assign(Object.create(prototype), value);
+      // Define own properties without invoking inherited setters. Keep them
+      // writable even when the development runtime froze the original state.
+      const copy = Object.create(prototype);
+      for (const key of Reflect.ownKeys(value)) {
+        if (Object.prototype.propertyIsEnumerable.call(value, key)) {
+          Object.defineProperty(copy, key, {
+            value: (value as Record<PropertyKey, unknown>)[key],
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        }
+      }
+      return copy;
     }
   }
   throw new Error(
@@ -139,7 +152,7 @@ export function unstable_copyForUpdate<T>(value: T): T {
  * See compiler/docs/experiments/0007-state-variables.md.
  */
 export function unstable_freezeState(value: unknown): void {
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env['NODE_ENV'] !== 'production') {
     deepFreeze(value);
   }
 }

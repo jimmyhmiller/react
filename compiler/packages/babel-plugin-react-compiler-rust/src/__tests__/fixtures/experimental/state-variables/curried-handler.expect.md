@@ -35,7 +35,8 @@ function Tabs() {
   let t0;
   if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
     t0 = (id) => () => {
-      setSelected(id);
+      const t1 = id;
+      setSelected(() => t1);
     };
     $[0] = t0;
   } else {

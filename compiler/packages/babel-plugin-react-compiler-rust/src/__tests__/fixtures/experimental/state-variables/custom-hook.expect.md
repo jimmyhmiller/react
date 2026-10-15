@@ -30,27 +30,36 @@ import { c as _c, unstable_freezeState } from "react/compiler-runtime"; // @enab
 // A function named like a hook whose nested function reassigns its variable is
 // a hook, although it calls no hook: it calls `useState` once compiled.
 function useToggle(initial) {
-  const $ = _c(3);
-  const [on, setOn] = useState(initial);
+  const $ = _c(5);
+  const t0 = initial;
+  let t1;
+  if ($[0] !== t0) {
+    t1 = () => t0;
+    $[0] = t0;
+    $[1] = t1;
+  } else {
+    t1 = $[1];
+  }
+  const [on, setOn] = useState(t1);
   unstable_freezeState(on);
-  let t0;
-  if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
-    t0 = () => {
+  let t2;
+  if ($[2] === Symbol.for("react.memo_cache_sentinel")) {
+    t2 = () => {
       setOn(_temp);
     };
-    $[0] = t0;
+    $[2] = t2;
   } else {
-    t0 = $[0];
+    t2 = $[2];
   }
-  let t1;
-  if ($[1] !== on) {
-    t1 = [on, t0];
-    $[1] = on;
-    $[2] = t1;
+  let t3;
+  if ($[3] !== on) {
+    t3 = [on, t2];
+    $[3] = on;
+    $[4] = t3;
   } else {
-    t1 = $[2];
+    t3 = $[4];
   }
-  return t1;
+  return t3;
 }
 function _temp(on) {
   return !on;

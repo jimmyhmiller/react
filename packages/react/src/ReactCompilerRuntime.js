@@ -28,6 +28,8 @@ import {
   enableSelectorReads,
 } from 'shared/ReactFeatureFlags';
 import isArray from 'shared/isArray';
+import getListIdentity from 'shared/ReactListIdentity';
+import is from 'shared/objectIs';
 
 export {useMemoCache as c};
 
@@ -55,7 +57,23 @@ export function unstable_copyForUpdate<T>(value: T): T {
   if (typeof value === 'object' && value !== null) {
     const prototype = Object.getPrototypeOf(value);
     if (prototype === Object.prototype || prototype === null) {
-      return Object.assign(Object.create(prototype), value);
+      // Define own properties rather than invoking inherited setters such as
+      // Object.prototype.__proto__. Keep the copy writable, even if state was
+      // frozen by the development runtime.
+      const copy = Object.create(prototype);
+      const keys = Reflect.ownKeys(value);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        if (Object.prototype.propertyIsEnumerable.call(value, key)) {
+          Object.defineProperty(copy, key, {
+            value: (value: any)[key],
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        }
+      }
+      return (copy: any);
     }
   }
   throw new Error(
@@ -387,8 +405,8 @@ export function unstable_selectHookResult<T>(
 // results, so (render being pure) it would return the same element. `map`
 // calls the callback only for the items that can differ, and returns a copy of
 // the previous result with those items replaced. The copy records the previous
-// result and the replaced indices (REACT_LIST_CHANGES), which lets a renderer
-// that committed the previous result update only those items.
+// result identity and the replaced indices (REACT_LIST_CHANGES), letting a
+// renderer that committed the previous result update only those items.
 //
 // The callback's identity stands for everything else it reads: the compiler
 // memoizes it on those values, and only the selections are read through `matchesSelection`.
@@ -413,8 +431,8 @@ class MultipleComparands {
 }
 
 export type ListChanges = {
-  base: $ReadOnlyArray<mixed>,
-  // Ascending indices of the items that differ from `base`.
+  base: symbol,
+  // Ascending indices of the items that differ from the base list.
   indices: $ReadOnlyArray<number>,
 };
 
@@ -720,7 +738,7 @@ class ListItemMemoCache {
     while (
       prefix < sharedLength &&
       prefix in previousArray === prefix in array &&
-      previousArray[prefix] === array[prefix]
+      is(previousArray[prefix], array[prefix])
     ) {
       prefix++;
     }
@@ -729,7 +747,7 @@ class ListItemMemoCache {
       suffix < sharedLength - prefix &&
       previousLength - 1 - suffix in previousArray ===
         length - 1 - suffix in array &&
-      previousArray[previousLength - 1 - suffix] === array[length - 1 - suffix]
+      is(previousArray[previousLength - 1 - suffix], array[length - 1 - suffix])
     ) {
       suffix++;
     }
@@ -835,6 +853,7 @@ class ListItemMemoCache {
     this.previous = caches;
     this.previousKeys = keys;
     this.previousByKey = null;
+    getListIdentity(result);
     this.mapped = {
       array,
       callback,
@@ -919,6 +938,7 @@ class ListItemMemoCache {
     }
     // Every invocation completed; apply their results.
     const result = mapped.result.slice();
+    getListIdentity(result);
     for (let i = 0; i < indices.length; i++) {
       const index = indices[i];
       result[index] = values[i];
@@ -935,7 +955,10 @@ class ListItemMemoCache {
       }
     }
     this.previousByKey = null;
-    const changes: ListChanges = {base: mapped.result, indices};
+    const changes: ListChanges = {
+      base: getListIdentity(mapped.result),
+      indices,
+    };
     (result as any)[REACT_LIST_CHANGES] = changes;
     mapped.result = result;
     mapped.selections = selections;

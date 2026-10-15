@@ -1207,6 +1207,104 @@ fn capitalize(name: &str) -> String {
     }
 }
 
+fn is_non_callable(func: &HirFunction, value: &Place) -> bool {
+    func.instructions.iter().any(|instr| {
+        instr.lvalue.identifier == value.identifier
+            && matches!(
+                instr.value,
+                InstructionValue::Primitive { .. }
+                    | InstructionValue::ArrayExpression { .. }
+                    | InstructionValue::ObjectExpression { .. }
+                    | InstructionValue::BinaryExpression { .. }
+                    | InstructionValue::UnaryExpression { .. }
+                    | InstructionValue::TemplateLiteral { .. }
+                    | InstructionValue::JsxExpression { .. }
+                    | InstructionValue::JsxFragment { .. }
+            )
+    })
+}
+
+/// React treats functions passed to useState or its setter as initializers or
+/// updaters. Preserve ordinary value semantics by capturing possibly callable
+/// values now and returning them from a wrapper. Known non-callable values do
+/// not need a wrapper. This runs before type inference, so an unknown value
+/// must be treated as potentially callable.
+fn state_value_argument(
+    func: &mut HirFunction,
+    env: &mut Environment,
+    value: Place,
+    emitted: &mut Vec<InstructionId>,
+    loc: Option<SourceLocation>,
+) -> Place {
+    if is_non_callable(func, &value) {
+        return value;
+    }
+    let captured = promoted_variable(env, loc);
+    let (store, _) = add_temporary(
+        func,
+        env,
+        InstructionValue::StoreLocal {
+            lvalue: LValue {
+                place: captured.clone(),
+                kind: InstructionKind::Const,
+            },
+            value,
+            type_annotation: None,
+            loc,
+        },
+        loc,
+    );
+    emitted.push(store);
+
+    let mut wrapper = placeholder_function();
+    wrapper.loc = loc;
+    wrapper.returns = create_temporary_place(env, loc);
+    wrapper.context = vec![captured.clone()];
+    let (load, result) = add_temporary(
+        &mut wrapper,
+        env,
+        InstructionValue::LoadLocal {
+            place: captured,
+            loc,
+        },
+        loc,
+    );
+    let block = env.next_block_id();
+    wrapper.body.entry = block;
+    wrapper.body.blocks.insert(
+        block,
+        BasicBlock {
+            kind: BlockKind::Block,
+            id: block,
+            instructions: vec![load],
+            terminal: Terminal::Return {
+                value: result,
+                return_variant: ReturnVariant::Implicit,
+                id: EvaluationOrder(0),
+                loc,
+                effects: None,
+            },
+            preds: Default::default(),
+            phis: Vec::new(),
+        },
+    );
+    let wrapper = env.add_function(wrapper);
+    let (id, argument) = add_temporary(
+        func,
+        env,
+        InstructionValue::FunctionExpression {
+            name: None,
+            name_hint: None,
+            lowered_func: LoweredFunction { func: wrapper },
+            expr_type: FunctionExpressionType::ArrowFunctionExpression,
+            loc,
+        },
+        loc,
+    );
+    emitted.push(id);
+    argument
+}
+
 /// Replaces `let x = init` with `const [x, setX] = useState(init)` and returns
 /// `setX`.
 fn declare_state(
@@ -1228,6 +1326,9 @@ fn declare_state(
         _ => unreachable!("a candidate is declared by a store or a declaration"),
     };
 
+    let mut emitted = Vec::new();
+    let initial =
+        initial.map(|value| state_value_argument(func, env, value, &mut emitted, declaration.loc));
     let (load_id, callee) = add_temporary(
         func,
         env,
@@ -1264,7 +1365,9 @@ fn declare_state(
         loc: declaration.loc,
     };
     let (block, position) = position_of(func, declaration.instr);
-    insert_at(func, block, position, vec![load_id, call_id]);
+    emitted.extend([load_id, call_id]);
+    let after_declaration = position + emitted.len() + 1;
+    insert_at(func, block, position, emitted);
 
     // `freezeState(x)`: in development, a modification of the state that the
     // compiler could not turn into an update throws.
@@ -1299,7 +1402,7 @@ fn declare_state(
     insert_at(
         func,
         block,
-        position + 3,
+        after_declaration,
         vec![freeze_id, value_id, frozen_id],
     );
     setter
@@ -2294,6 +2397,11 @@ fn rewrite_function(
                 }
                 None => stored.clone(),
             },
+        };
+        let argument = if slice.is_none() && !is_non_callable(func, &stored) {
+            state_value_argument(func, env, argument, &mut emitted, loc)
+        } else {
+            argument
         };
         let (load_id, callee) = add_temporary(
             func,

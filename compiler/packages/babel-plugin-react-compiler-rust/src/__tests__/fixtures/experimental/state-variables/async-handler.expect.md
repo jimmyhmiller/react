@@ -34,7 +34,8 @@ function Loader(t0) {
   if ($[0] !== load) {
     t1 = async function onLoad() {
       setLoading(true);
-      setData(await load());
+      const t2 = await load();
+      setData(() => t2);
       setLoading(false);
     };
     $[0] = load;

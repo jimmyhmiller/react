@@ -50,6 +50,21 @@ describe('state variables', () => {
       expect(Object.getPrototypeOf(copy)).toBe(Object.prototype);
     });
 
+    it('copies an own __proto__ property without changing the prototype', () => {
+      const object = JSON.parse('{"__proto__":{"injected":true},"value":1}');
+      const copy = copyForUpdate(object);
+      expect(Object.getPrototypeOf(copy)).toBe(Object.prototype);
+      expect(Object.prototype.hasOwnProperty.call(copy, '__proto__')).toBe(
+        true,
+      );
+      expect(Object.getOwnPropertyDescriptor(copy, '__proto__').value).toBe(
+        Object.getOwnPropertyDescriptor(object, '__proto__').value,
+      );
+      expect(copy.injected).toBe(undefined);
+      copy.value = 2;
+      expect(object.value).toBe(1);
+    });
+
     it('copies an object without a prototype', () => {
       const object = Object.create(null);
       object.key = 'value';

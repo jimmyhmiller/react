@@ -239,6 +239,8 @@ describe('unstable_useListItemMemoCache()', () => {
   describe('map with selections', () => {
     const SENTINEL = Symbol.for('react.memo_cache_sentinel');
     const LIST_CHANGES = Symbol.for('react.list_changes');
+    const listIdentity = list =>
+      require('shared/ReactListIdentity').default(list);
     let lastResult;
     let invocations = 0;
 
@@ -289,6 +291,23 @@ describe('unstable_useListItemMemoCache()', () => {
     const c = {id: 3, label: 'c'};
     const d = {id: 4, label: 'd'};
 
+    it('does not retain previous result arrays through change metadata', async () => {
+      const items = [a, b, c];
+      const root = ReactNoop.createRoot();
+      const selections = [1, 2, 3, 1, 2];
+      for (let i = 0; i < selections.length; i++) {
+        const selectedId = selections[i];
+        await act(() =>
+          root.render(<SelectList items={items} selectedId={selectedId} />),
+        );
+        Scheduler.unstable_clearLog();
+        Object.freeze(lastResult);
+      }
+      // A strong reference to the previous array retains every earlier result
+      // through its metadata, growing memory with every selection change.
+      expect(typeof lastResult[LIST_CHANGES].base).toBe('symbol');
+    });
+
     it('calls the callback only for items whose comparisons can change', async () => {
       const items = [a, b, c, d];
       const root = ReactNoop.createRoot();
@@ -315,7 +334,10 @@ describe('unstable_useListItemMemoCache()', () => {
       expect(root).toMatchRenderedOutput('a*,b,c,d');
       expect(invocations).toBe(2);
       expect(lastResult).not.toBe(second);
-      expect(lastResult[LIST_CHANGES]).toEqual({base: second, indices: [0, 3]});
+      expect(lastResult[LIST_CHANGES]).toEqual({
+        base: listIdentity(second),
+        indices: [0, 3],
+      });
       expect(lastResult[1]).toBe(second[1]);
 
       // A selection that no item compares equal to only recomputes the item
@@ -328,7 +350,10 @@ describe('unstable_useListItemMemoCache()', () => {
       assertLog(['render 1']);
       expect(root).toMatchRenderedOutput('a,b,c,d');
       expect(invocations).toBe(1);
-      expect(lastResult[LIST_CHANGES]).toEqual({base: third, indices: [0]});
+      expect(lastResult[LIST_CHANGES]).toEqual({
+        base: listIdentity(third),
+        indices: [0],
+      });
 
       // Neither the previous nor the new selection matches any item: the
       // previous result is returned as is.
@@ -614,6 +639,20 @@ describe('unstable_useListItemMemoCache()', () => {
       }
       return listItemCache.mapIncremental(items, callback, []).join(',');
     }
+
+    it('recomputes both ends when the sign of zero changes', async () => {
+      const callback = item => String(1 / item);
+      function SignedZeroList({items}) {
+        return useListItemMemoCache()
+          .mapIncremental(items, callback, [])
+          .join(',');
+      }
+      const root = ReactNoop.createRoot();
+      await act(() => root.render(<SignedZeroList items={[0, 1, 0]} />));
+      expect(root).toMatchRenderedOutput('Infinity,1,Infinity');
+      await act(() => root.render(<SignedZeroList items={[-0, 2, -0]} />));
+      expect(root).toMatchRenderedOutput('-Infinity,0.5,-Infinity');
+    });
 
     it('maps only an appended immutable suffix', async () => {
       const a = {id: 1, label: 'a'};

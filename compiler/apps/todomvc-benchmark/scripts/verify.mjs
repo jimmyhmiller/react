@@ -55,6 +55,11 @@ function parseArgs(argv) {
       throw new Error(`Unknown argument: ${argv[i]}`);
     }
   }
+  for (const name of args.variants) {
+    if (!VARIANTS.some(variant => variant.name === name)) {
+      throw new Error(`Unknown variant: ${name}`);
+    }
+  }
   return args;
 }
 
@@ -71,12 +76,19 @@ async function snapshots(browser, variant, workload, ssr) {
   try {
     const url = pathToFileURL(
       ssr
-        ? path.join(ROOT, 'dist', variant.name, workload.app, 'ssr', 'index.html')
-        : path.join(ROOT, 'dist', variant.name, workload.app, 'index.html'),
+        ? path.join(
+            ROOT,
+            'dist',
+            variant.name,
+            workload.app,
+            'ssr',
+            'index.html'
+          )
+        : path.join(ROOT, 'dist', variant.name, workload.app, 'index.html')
     ).href;
     await page.goto(url);
     await page.waitForSelector(
-      ssr ? 'body[data-hydrated]' : APP_PAGES[workload.app].ready,
+      ssr ? 'body[data-hydrated]' : APP_PAGES[workload.app].ready
     );
     await page.evaluate(PAGE_HELPERS);
     const result = [];
@@ -87,7 +99,7 @@ async function snapshots(browser, variant, workload, ssr) {
           const root = document.querySelector('${APP_PAGES[workload.app].root}');
           const canonical = ${canonicalHTML.toString()};
           return {exact: canonical(root, false), state: canonical(root, true)};
-        })()`,
+        })()`
       );
       result.push({label, html});
     };
@@ -96,7 +108,9 @@ async function snapshots(browser, variant, workload, ssr) {
     }
     await capture('after setup');
     for (const step of workload.steps) {
-      await page.evaluate(`(async () => { ${step.run}; await __bench.nextFrame(); ${step.verify} })()`);
+      await page.evaluate(
+        `(async () => { ${step.run}; await __bench.nextFrame(); ${step.verify} })()`
+      );
       await capture(`after ${step.name}`);
     }
     if (errors.length !== 0) {
@@ -114,7 +128,10 @@ async function snapshots(browser, variant, workload, ssr) {
 // properties instead of the corresponding attributes, and comments are skipped.
 function canonicalHTML(root, compareState) {
   function escape(text) {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/"/g, '&quot;');
   }
   function serialize(node) {
     const isInput = node.localName === 'input';
@@ -125,9 +142,11 @@ function canonicalHTML(root, compareState) {
           !compareState ||
           !(
             (isInput &&
-              (name === 'value' || name === 'checked' || name === 'autofocus')) ||
+              (name === 'value' ||
+                name === 'checked' ||
+                name === 'autofocus')) ||
             (name === 'class' && node.getAttribute(name) === '')
-          ),
+          )
       )
       .sort();
     let out = '<' + node.localName;
@@ -135,7 +154,8 @@ function canonicalHTML(root, compareState) {
       out += ' ' + name + '="' + escape(node.getAttribute(name)) + '"';
     }
     if (compareState && isInput) {
-      out += ' .value="' + escape(node.value) + '" .checked="' + node.checked + '"';
+      out +=
+        ' .value="' + escape(node.value) + '" .checked="' + node.checked + '"';
     }
     out += '>';
     let text = '';
@@ -191,14 +211,18 @@ async function main() {
         browser,
         VARIANTS.find(v => v.name === REFERENCE),
         workload,
-        args.ssr,
+        args.ssr
       );
       for (const variant of VARIANTS) {
         if (
           variant.name === REFERENCE ||
           (args.ssr && variant.framework !== 'react') ||
-          (args.variants.length !== 0 && !args.variants.includes(variant.name)) ||
-          !variantHasApp(variant, APPS.find(app => app.name === workload.app))
+          (args.variants.length !== 0 &&
+            !args.variants.includes(variant.name)) ||
+          !variantHasApp(
+            variant,
+            APPS.find(app => app.name === workload.app)
+          )
         ) {
           continue;
         }
@@ -212,7 +236,7 @@ async function main() {
             console.error(
               `MISMATCH ${workload.name} ${reference[i].label}: ${variant.name}\n` +
                 `  expected: ...${expected.slice(Math.max(0, at - 80), at + 80)}\n` +
-                `  actual:   ...${got.slice(Math.max(0, at - 80), at + 80)}`,
+                `  actual:   ...${got.slice(Math.max(0, at - 80), at + 80)}`
             );
             failed = true;
             break;
