@@ -191,6 +191,64 @@ function pathsChanged(previous: mixed, next: mixed, argument: mixed): boolean {
   return false;
 }
 
+// A compiler-proven single-key selection. Each render owns its cache; no
+// subscription, component boundary or application state is introduced.
+type ContextKeySelection = {
+  key: any,
+  initialized: boolean,
+  selected: mixed,
+  checked: boolean,
+  context: mixed,
+  result: boolean,
+};
+
+function keySelectionChanged(
+  previous: mixed,
+  next: mixed,
+  argument: mixed,
+): boolean {
+  const selection: ContextKeySelection = argument as any;
+  if (!selection.initialized) {
+    // Read lazily, at the same stage as the generic path comparator. In
+    // particular, do not eagerly evaluate a possibly throwing getter during
+    // a render whose control flow does not read that property.
+    selection.selected =
+      previous == null ? undefined : (previous: any)[selection.key];
+    selection.initialized = true;
+  }
+  if (selection.checked && Object.is(selection.context, next)) {
+    return selection.result;
+  }
+  const value = next == null ? undefined : (next: any)[selection.key];
+  const result = !Object.is(selection.selected, value);
+  // Do not cache exceptions. The reconciler treats them as changed and the
+  // normal component render remains responsible for throwing, if it does.
+  selection.context = next;
+  selection.result = result;
+  selection.checked = true;
+  return result;
+}
+
+export function unstable_useContextKey<T>(
+  Context: ReactContext<T>,
+  key: mixed,
+): T {
+  if (!enableContextSelectors) {
+    throw new Error(
+      'Context selectors are not enabled in this build of React.',
+    );
+  }
+  const selection: ContextKeySelection = {
+    key,
+    initialized: false,
+    selected: undefined,
+    checked: false,
+    context: undefined,
+    result: false,
+  };
+  return useContextWithSelector(Context, keySelectionChanged as any, selection);
+}
+
 export function unstable_useContextPaths<T>(
   Context: ReactContext<T>,
   paths: SelectedPaths,

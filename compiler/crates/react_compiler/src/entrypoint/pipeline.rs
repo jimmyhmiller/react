@@ -2266,6 +2266,10 @@ impl react_compiler_optimization::context_selectors::ContextSelectorImports for 
         self.binding("unstable_useContextPaths")
     }
 
+    fn use_context_key(&mut self) -> react_compiler_hir::NonLocalBinding {
+        self.binding("unstable_useContextKey")
+    }
+
     fn start_selected_hook(&mut self) -> react_compiler_hir::NonLocalBinding {
         self.binding("unstable_startSelectedHook")
     }

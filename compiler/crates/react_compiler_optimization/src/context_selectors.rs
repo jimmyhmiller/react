@@ -83,6 +83,7 @@ use react_compiler_lowering::{create_temporary_place, mark_instruction_ids};
 /// (they are imported from react/compiler-runtime).
 pub trait ContextSelectorImports {
     fn use_context_paths(&mut self) -> NonLocalBinding;
+    fn use_context_key(&mut self) -> NonLocalBinding;
     fn start_selected_hook(&mut self) -> NonLocalBinding;
     fn select_hook_paths(&mut self) -> NonLocalBinding;
     /// `unstable_skipStoreHookN` for a call with `argument_count` (at most
@@ -962,8 +963,24 @@ fn rewrite(
     reads: Option<&[PropertyLiteral]>,
 ) {
     let mut before: Vec<InstructionId> = Vec::new();
+    // The existing analysis proves that the entire dependency is one key.
+    // Keep the generic descriptor for nested paths, comparisons, escapes and
+    // custom hooks. The app and its component tree are not changed.
+    let single_key =
+        if env.config.enable_context_key_specialization && site.kind == SiteKind::Context {
+            match entries {
+                Some([Entry::Read(keys)]) if keys.len() == 1 => Some(keys[0].clone()),
+                _ => None,
+            }
+        } else {
+            None
+        };
     let mut descriptor: Vec<Place> = Vec::new();
-    for entry in entries.unwrap_or_default() {
+    for entry in if single_key.is_some() {
+        &[]
+    } else {
+        entries.unwrap_or_default()
+    } {
         let mut elements: Vec<Place> = Vec::new();
         let keys = match entry {
             Entry::Read(keys) => {
@@ -1005,9 +1022,24 @@ fn rewrite(
     }
     // An unselected hook call (only made through the runtime for update
     // slicing) is described by `null`.
-    let descriptor = match entries {
-        Some(_) => array(func, env, &mut before, descriptor),
-        None => primitive(func, env, &mut before, PrimitiveValue::Null),
+    let descriptor = if let Some(key) = &single_key {
+        match key {
+            Key::Static(PropertyLiteral::String(name)) => primitive(
+                func,
+                env,
+                &mut before,
+                PrimitiveValue::String(name.clone().into()),
+            ),
+            Key::Static(PropertyLiteral::Number(number)) => {
+                primitive(func, env, &mut before, PrimitiveValue::Number(*number))
+            }
+            Key::Dynamic(expr) => materialize(func, env, &mut before, expr),
+        }
+    } else {
+        match entries {
+            Some(_) => array(func, env, &mut before, descriptor),
+            None => primitive(func, env, &mut before, PrimitiveValue::Null),
+        }
     };
 
     let mut after: Vec<InstructionId> = Vec::new();
@@ -1022,7 +1054,11 @@ fn rewrite(
                 let type_id = env.identifiers[callee.identifier.0 as usize].type_;
                 env.types[type_id.0 as usize].clone()
             };
-            let binding = imports.use_context_paths();
+            let binding = if single_key.is_some() {
+                imports.use_context_key()
+            } else {
+                imports.use_context_paths()
+            };
             let callee = load_global(func, env, &mut before, binding, callee_type);
             let InstructionValue::CallExpression {
                 callee: site_callee,

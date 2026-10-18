@@ -307,6 +307,7 @@ export async function transformFixtureInput(
       'enableListItemMemoization',
       'enableIncrementalListMapping',
       'enableContextSelectors',
+      'enableContextKeySpecialization',
       'enableUpdateSlicing',
       'enableSelectorReads',
       'enableStaticIslands',

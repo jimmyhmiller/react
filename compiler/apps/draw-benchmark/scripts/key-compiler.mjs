@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import {execFileSync} from 'node:child_process';
+import {COMPILER} from './config.mjs';
+execFileSync(process.env.CARGO??path.join(os.homedir(),'.cargo/bin/cargo'),['build','--manifest-path',path.join(COMPILER,'Cargo.toml'),'-p','react_compiler_napi','--release'],{stdio:'inherit'});
+const target=path.join(COMPILER,'packages/babel-plugin-react-compiler-rust/native/index.node');
+const temporary=target+'.'+process.pid+'.tmp';
+fs.copyFileSync(path.join(COMPILER,'target/release',process.platform==='darwin'?'libreact_compiler_napi.dylib':'libreact_compiler_napi.so'),temporary);
+fs.renameSync(temporary,target);

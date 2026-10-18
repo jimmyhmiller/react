@@ -1,0 +1,25 @@
+{
+  "name": "draw-benchmark",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/serve.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "verify": "node scripts/matrix.mjs --verify",
+    "bench": "node scripts/matrix.mjs",
+    "confirm": "node scripts/matrix.mjs --confirm",
+    "test:layout": "node scripts/layout-check.mjs",
+    "profile": "node scripts/profile.mjs && node scripts/count-work.mjs",
+    "report": "node scripts/report.mjs",
+    "test:dashboard": "node scripts/dashboard-test.mjs",
+    "build:keys:compiler": "node scripts/key-compiler.mjs",
+    "build:keys:runtime": "node scripts/key-runtime.mjs",
+    "build:keys": "node scripts/key-build.mjs",
+    "test:keys:compiler": "node scripts/key-fixtures.cjs",
+    "verify:keys": "node scripts/key-verify.mjs",
+    "confirm:keys": "node scripts/key-confirm.mjs",
+    "test:keys:layout": "node scripts/layout-check.mjs results/key-20-on results/key-222-on",
+    "test:keys:dashboard": "node scripts/key-dashboard-test.mjs"
+  }
+}

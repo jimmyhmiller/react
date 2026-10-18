@@ -18,6 +18,7 @@ const RUST_ONLY_ENVIRONMENT_FLAGS: ReadonlyArray<string> = [
   'enableListItemMemoization',
   'enableIncrementalListMapping',
   'enableContextSelectors',
+  'enableContextKeySpecialization',
   'enableUpdateSlicing',
   'enableSelectorReads',
   'enableStaticIslands',

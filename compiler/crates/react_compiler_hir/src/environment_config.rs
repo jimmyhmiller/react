@@ -226,6 +226,11 @@ pub struct EnvironmentConfig {
     #[serde(default)]
     pub enable_context_selectors: bool,
 
+    /// Specialize a single top-level context selection into a cached key read.
+    /// Requires enable_context_selectors and the matching compiler runtime.
+    #[serde(default)]
+    pub enable_context_key_specialization: bool,
+
     /// Rust compiler only, with `enable_context_selectors`. Call custom hooks
     /// through react/compiler-runtime, so that React can skip calls of store
     /// hooks whose arguments are unchanged (requires a React build with
@@ -300,6 +305,7 @@ impl Default for EnvironmentConfig {
             enable_incremental_list_mapping: false,
             enable_state_variables: false,
             enable_context_selectors: false,
+            enable_context_key_specialization: false,
             enable_update_slicing: false,
             enable_selector_reads: false,
             enable_static_islands: false,
