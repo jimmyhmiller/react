@@ -86,7 +86,11 @@ function load(code: string, modules: Record<string, unknown>) {
       id === 'react-compiler-runtime/server'
         ? runtime
         : id === 'react'
-          ? {Suspense: 'suspense', Fragment: 'fragment'}
+          ? {
+              Suspense: 'suspense',
+              Fragment: 'fragment',
+              cache: (fn: unknown) => fn,
+            }
           : modules[id],
     exports,
     (type: unknown, props: unknown, ...children: Array<unknown>) => ({
@@ -345,16 +349,32 @@ it('keeps catches and finally effects at the original consumption sites', async 
   }
 });
 
-it('leaves unknown getters and coercions out of speculative helper plans', () => {
-  const {events} = compile(`${imports}
+it('leaves unknown getters and coercions out of original-entry speculation', async () => {
+  const compiled = compile(`${imports}
     function dangerous(value) { const id = value + ''; return id; }
-    export async function Page({id}) { const product = await dangerous(id); const reviews = await getReviews(id); return reviews; }
+    export async function Page({id}) { const product = await dangerous(id); const reviews = await getReviews(product); return reviews; }
   `);
-  const summary = events.find(
+  const summary = compiled.events.find(
     event =>
       event.kind === 'ServerPreloadSummary' && event.component === 'Page',
   );
-  expect(summary).toBeUndefined();
+  expect(summary).toMatchObject({requiresData: true});
+  let coercions = 0;
+  const id = {
+    toString() {
+      coercions++;
+      return 'key';
+    },
+  };
+  const getReviews = runtime.createServerRead(async (key: string) => key);
+  const module = load(compiled.code, {data: {getReviews}});
+  const owner = runtime.createServerPreloadRequest();
+  try {
+    expect(await owner.run(() => module['Page']({id}))).toBe('key');
+    expect(coercions).toBe(1);
+  } finally {
+    owner.close();
+  }
 });
 
 it('automatically resolves child plans, helper plans and re-export aliases across a module graph', async () => {
@@ -1069,6 +1089,289 @@ it('preserves original error precedence and catches for unified batch reads', as
     expect(bulk.mock.calls.flatMap(([keys]) => keys.map(([id]) => id))).toEqual(
       [1, 2],
     );
+  } finally {
+    owner.close();
+  }
+});
+
+it.each([false, true])(
+  'starts independent child reads before mapped summaries settle, including failure=%s',
+  async fail => {
+    const org = deferred(),
+      projects = deferred(),
+      activity = deferred(),
+      summary = deferred(),
+      owner = deferred(),
+      actor = deferred();
+    const started: Array<string> = [];
+    const make = (name: string, value: ReturnType<typeof deferred>) =>
+      runtime.createServerRead(async (_id?: string) => {
+        started.push(name);
+        return value.promise;
+      });
+    const getProduct = make('organization', org),
+      getRows = make('projects', projects),
+      getFlags = make('activity', activity),
+      getSeller = make('summary', summary);
+    const getReviews = runtime.createServerRead(async (id: string) => {
+      started.push(id);
+      return id === 'owner' ? owner.promise : actor.promise;
+    });
+    const source = `${imports}
+    const panel={color:'green',padding:12};
+    async function Owner({id}) {const person=await getReviews(id);return <p>{person.name}</p>;}
+    async function ProjectCard({project}) {const summary=await getSeller(project.id);return <section style={{...panel}}><h2>{project.name.slice(0,1)}</h2><p>{summary.open.length}</p><Owner id={project.ownerId}/></section>;}
+    async function Activity({id}) {const entries=await getFlags(id);return <ul>{entries.map(entry=><Owner id={entry.actorId}/>)}</ul>;}
+    export async function Page({id='org',show=true}) {
+      const org=await getProduct(id);if(!org)return <p>Missing</p>;
+      const projects=await getRows(org.id);
+      const summaries=await Promise.all(projects.map(project=>getSeller(project.id)));
+      const count=summaries.reduce((count,summary)=>count+summary.open.length,0);
+      return <main style={panel}><h1>{count}</h1>{projects.map(project=><ProjectCard project={project}/>)}{show?<Activity id={org.id}/>:null}</main>;
+    }`;
+    const descriptors = resources.map(r => ({
+      ...r,
+      result:
+        r.importSpecifierName === 'getRows' ||
+        r.importSpecifierName === 'getFlags'
+          ? ('array' as const)
+          : ('immutable-data' as const),
+    }));
+    const compiled = compile(source, {
+      serverPreloads: {resources: descriptors},
+    });
+    const module = load(compiled.code, {
+      data: {getProduct, getRows, getFlags, getSeller, getReviews},
+    });
+    const request = runtime.createServerPreloadRequest();
+    const error = new Error('original summary');
+    try {
+      await request.run(async () => {
+        const render = module['Page']({});
+        render.catch(() => {});
+        org.resolve({id: 'org'});
+        await tick();
+        expect(started).toEqual(
+          expect.arrayContaining(['organization', 'projects', 'activity']),
+        );
+        expect(started).not.toContain('owner');
+        projects.resolve([{id: 'project', name: 'Alpha', ownerId: 'owner'}]);
+        await tick();
+        expect(started).toContain('summary');
+        expect(started).toContain('owner');
+        activity.resolve([{actorId: 'actor'}]);
+        await tick();
+        expect(started).toContain('actor');
+        owner.resolve({name: 'Owner'});
+        actor.resolve({name: 'Actor'});
+        if (fail) {
+          summary.reject(error);
+          await expect(render).rejects.toBe(error);
+        } else {
+          summary.resolve({open: []});
+          await render;
+        }
+        expect(started.filter(name => name === 'summary')).toHaveLength(1);
+      });
+    } finally {
+      request.close();
+    }
+  },
+);
+
+it('copies literal defaults into companions while evaluating effectful defaults only at original entry', async () => {
+  const calls: Array<string> = [];
+  const compiled = compile(
+    `${imports} export async function Page({id='default',enabled=true}){const a=await getProduct(id);const b=await getReviews(enabled);return {a,b};}`,
+  );
+  const getProduct = runtime.createServerRead(async (id: string) => {
+    calls.push(id);
+    return {id};
+  });
+  const getReviews = runtime.createServerRead(async (flag: boolean) => {
+    calls.push(String(flag));
+    return 'reviews';
+  });
+  const module = load(compiled.code, {data: {getProduct, getReviews}});
+  const owner = runtime.createServerPreloadRequest();
+  try {
+    await owner.run(() => module['Page']({}));
+    expect(calls).toEqual(['default', 'true']);
+  } finally {
+    owner.close();
+  }
+  const next = compile(
+    `${imports} import {defaultId} from 'effect';export async function Page({id=defaultId()}){return await getProduct(id);}`,
+  );
+  expect(
+    next.events.some(
+      event =>
+        event.kind === 'ServerPreload' &&
+        event.reason.includes('literal-only default'),
+    ),
+  ).toBe(true);
+  expect(
+    next.events.some(
+      event =>
+        event.kind === 'ServerPreloadSummary' && event.component === 'Page',
+    ),
+  ).toBe(false);
+});
+
+it('bounds speculative map callbacks without poisoning later demanded keys, and preserves sparse native arrays', async () => {
+  const calls: Array<number> = [];
+  const rows: Array<{id: number}> = new Array(100);
+  rows[2] = {id: 2};
+  rows[30] = {id: 30};
+  rows[90] = {id: 90};
+  const getRows = runtime.createServerRead(async () => rows);
+  const getProduct = runtime.createServerRead(async (id: number) => {
+    calls.push(id);
+    return {id};
+  });
+  const compiled = compile(
+    `${imports} export async function Page(){const rows=await getRows();const values=await Promise.all(rows.map(row=>getProduct(row.id)));return <p>{values.length}</p>;}`,
+  );
+  const module = load(compiled.code, {data: {getRows, getProduct}});
+  const owner = runtime.createServerPreloadRequest({maxPlanSteps: 4});
+  try {
+    await owner.run(async () => {
+      runtime.plan(module['__reactPreload_Page'], []);
+      await tick();
+      expect(calls.length).toBeLessThan(3);
+      await module['Page']();
+      expect(calls.sort((a, b) => a - b)).toEqual([2, 30, 90]);
+    });
+  } finally {
+    owner.close();
+  }
+});
+
+it.each(['side-effect', 'shadowed-promise'])(
+  'retains callback/constructor effects across an earlier await: %s',
+  async kind => {
+    const gate = deferred();
+    const calls: Array<string> = [];
+    const getRows = runtime.createServerRead(async () => [
+      {id: 'a'},
+      {id: 'b'},
+    ]);
+    const getFlags = runtime.createServerRead(async () => gate.promise);
+    const getProduct = runtime.createServerRead(async (id: string) => {
+      calls.push('read:' + id);
+      return {id};
+    });
+    const record = (id: string) => calls.push('effect:' + id);
+    const source = `${imports} import {record} from 'effects';export async function Page(${kind === 'shadowed-promise' ? '{Promise}' : ''}){const rows=await getRows();await getFlags('gate');const values=await Promise.all(rows.map(row=>{${kind === 'side-effect' ? 'record(row.id);' : ''}return getProduct(row.id);}));return <p>{values.length}</p>;}`;
+    const module = load(compile(source).code, {
+      data: {getRows, getFlags, getProduct},
+      effects: {record},
+    });
+    const owner = runtime.createServerPreloadRequest();
+    try {
+      await owner.run(async () => {
+        const result = module['Page'](
+          kind === 'shadowed-promise'
+            ? {
+                Promise: {
+                  all: (values: Array<Promise<unknown>>) => {
+                    calls.push('custom all');
+                    return Promise.all(values);
+                  },
+                },
+              }
+            : undefined,
+        );
+        await tick();
+        expect(calls).toEqual([]);
+        gate.resolve('ready');
+        await result;
+        expect(calls.filter(s => s.startsWith('read:'))).toEqual([
+          'read:a',
+          'read:b',
+        ]);
+        if (kind === 'side-effect')
+          expect(calls.indexOf('effect:a')).toBeLessThan(
+            calls.indexOf('read:a'),
+          );
+        else expect(calls).toContain('custom all');
+      });
+    } finally {
+      owner.close();
+    }
+  },
+);
+
+it('does not infer getters from unknown incoming records or mutated module records', async () => {
+  const gate = deferred();
+  const calls: Array<string> = [];
+  const source = `${imports} import {record,change} from 'effects';const settings={color:0};function alter(value){({color:settings.color}=value);}alter(change);async function Child(){const result=await getReviews('child');return <p>{result}</p>;}export async function Page(){const ready=await getFlags('gate');return <div>{settings.color.value}<Child/></div>;}`;
+  const getFlags = runtime.createServerRead(async () => gate.promise),
+    getReviews = runtime.createServerRead(async () => {
+      calls.push('read');
+      return 'child';
+    });
+  const change = {
+    color: {
+      get value() {
+        calls.push('getter');
+        return 'color';
+      },
+    },
+  };
+  const module = load(compile(source).code, {
+    data: {getFlags, getReviews},
+    effects: {record: () => {}, change},
+  });
+  const owner = runtime.createServerPreloadRequest();
+  try {
+    await owner.run(async () => {
+      const render = module['Page']();
+      await tick();
+      expect(calls).toEqual([]);
+      gate.resolve('ready');
+      await render;
+      expect(calls).toEqual(['getter']);
+    });
+  } finally {
+    owner.close();
+  }
+});
+
+it('derives cached composite helper plans from leaf readers and immutable collection computations', async () => {
+  const rows = deferred(),
+    one = deferred(),
+    two = deferred();
+  const calls: Array<string> = [];
+  const source = `import {cache} from 'react';${imports} export const totals=cache(async function totals(id){const rows=await getRows(id);const items=(await Promise.all(rows.filter(Boolean).flatMap(row=>row.ids).map(id=>getProduct(id)))).filter(Boolean);return {count:items.length,sum:items.reduce((sum,item)=>sum+item.value,0)};});export async function Page({id}){const total=await totals(id);return <p>{total.sum}</p>;}`;
+  const getRows = runtime.createServerRead(async () => rows.promise),
+    getProduct = runtime.createServerRead(async (id: string) => {
+      calls.push(id);
+      return id === 'one' ? one.promise : two.promise;
+    });
+  const compiled = compile(source);
+  expect(compiled.events).toContainEqual(
+    expect.objectContaining({
+      kind: 'ServerPreloadSummary',
+      component: 'totals',
+      functionKind: 'function',
+      complete: true,
+      result: 'immutable-data',
+    }),
+  );
+  const module = load(compiled.code, {data: {getRows, getProduct}});
+  const owner = runtime.createServerPreloadRequest();
+  try {
+    await owner.run(async () => {
+      const render = module['Page']({id: 'x'});
+      rows.resolve([{ids: ['one', 'two']}]);
+      await tick();
+      expect(calls).toEqual(['one', 'two']);
+      one.resolve({value: 3});
+      two.resolve({value: 4});
+      const result = await render;
+      expect(result.children).toEqual([7]);
+    });
   } finally {
     owner.close();
   }

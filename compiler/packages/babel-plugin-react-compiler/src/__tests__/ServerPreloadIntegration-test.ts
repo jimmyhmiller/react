@@ -16,9 +16,14 @@ import {serverPreloadsEsbuildPlugin} from '../Server/ServerPreloadsEsbuildPlugin
 const nodeModules = path.resolve(__dirname, '../../../../node_modules');
 const execute = promisify(execFile);
 
-it.each(['configured', 'declared'])(
-  'bundles %s reads automatically and renders them through actual Flight',
-  async mode => {
+it.each([
+  {mode: 'configured', record: false},
+  {mode: 'declared', record: false},
+  {mode: 'configured', record: true},
+  {mode: 'declared', record: true},
+])(
+  'bundles $mode reads with record=$record and renders them through actual Flight',
+  async ({mode, record}) => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'react-server-preloads-'),
     );
@@ -30,11 +35,11 @@ it.each(['configured', 'declared'])(
         export async function Page({id}) {
           const product = await getProduct(id);
           const flags = await getFlags(id);
-          return <><h1>{product.name}</h1><Suspense fallback={<p>loading</p>}><Comments id={product.sellerId}/></Suspense></>;
+          return <><h1>{product.name}</h1><Suspense fallback={<p>loading</p>}><Comments ${record ? 'product={product}' : 'id={product.sellerId}'}/></Suspense></>;
         }`,
           'barrel.js': `export {Seller as Comments} from './Seller';`,
           'Seller.jsx': `import React from 'react'; import {loadSeller} from './helper'; import {getReviews} from './data';
-        export async function Seller({id}) {const seller = await loadSeller(id); const reviews = await getReviews(seller.reviewId); return <div>{reviews}</div>;}`,
+        export async function Seller(${record ? '{product}' : '{id}'}) {const seller = await loadSeller(${record ? 'product.sellerId' : 'id'}); const reviews = await getReviews(seller.reviewId); return <div>{reviews}</div>;}`,
           'helper.js': `import {getSeller} from './data'; export async function loadSeller(id) {const seller = await getSeller(id); return seller;}`,
           'data.js':
             mode === 'configured'

@@ -856,3 +856,29 @@ already overlap available work close to their native dependency bounds.
 
 These findings bound the prototype's practical coverage; the large controlled
 scenario gains above do not establish broad application compatibility.
+
+### Immutable collection and component proofs
+
+Literal defaults in destructured props are copied into companions; effectful
+initializers remain at original entry and prevent a callable companion. Immutable
+reader results can flow through native `map`, `filter`, `flatMap`, `reduce`,
+`Promise.all`, readonly formatting methods, object spreads, and mapped JSX.
+Callbacks are analyzed in their own lexical scope. Unknown calls, shadowed
+constructors, getters, mutation, and custom iterables retain effect barriers.
+Speculative callback expansion shares the request step budget; cancellation does
+not populate the demanded read cache with a failed speculative result.
+
+Record props carry their proof across local components and graph-compiled imports
+and barrels. A companion marked `requiresData` is callable only with proven plain
+immutable data. A generic companion may advertise an additional `dataPreload`
+variant. Arbitrary original component entry never inherits those assumptions;
+route manifests reject roots requiring an unavailable proof. Specializations are
+bounded to 64 per module. Cached composite helpers derive summaries from their
+leaf readers rather than requiring another manually registered resource.
+
+JSX plans schedule independent child groups at their own earliest proven dependency
+point. They never execute component bodies or render JSX. All plan derivation
+finishes before source consumers are instrumented, so later specializations inspect
+the original source. The original awaits retain consumption and error precedence.
+These transformations rely on the existing recursive plain-data contract and
+unmodified native intrinsics; arbitrary objects are not assumed to obey it.

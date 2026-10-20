@@ -515,6 +515,10 @@ export async function compileServerPreloadGraph(
             source: stmt.source.value,
             importSpecifierName: imported,
             preload: summary.preload,
+            requiresData: summary.requiresData ?? false,
+            ...(summary.dataPreload === undefined
+              ? {}
+              : {dataPreload: summary.dataPreload}),
             ...(summary.planId === undefined ? {} : {planId: summary.planId}),
             props: summary.props,
             functionKind: summary.functionKind ?? 'component',
@@ -662,32 +666,46 @@ export async function compileServerPreloadGraph(
                 continue;
               }
               const dependencySummary = edge.summary;
-              const alias = path.scope.generateUidIdentifier('forwardPreload');
-              path.unshiftContainer(
-                'body',
-                t.importDeclaration(
-                  [
-                    t.importSpecifier(
-                      alias,
-                      t.isValidIdentifier(dependencySummary.preload)
-                        ? t.identifier(dependencySummary.preload)
-                        : t.stringLiteral(dependencySummary.preload),
-                    ),
-                  ],
-                  t.stringLiteral(edge.source),
-                ),
-              );
-              path.pushContainer(
-                'body',
-                t.exportNamedDeclaration(null, [
-                  t.exportSpecifier(
-                    t.cloneNode(alias),
-                    t.isValidIdentifier(summary.preload)
-                      ? t.identifier(summary.preload)
-                      : t.stringLiteral(summary.preload),
+              for (const [dependencyName, exportName] of [
+                [dependencySummary.preload, summary.preload],
+                ...(dependencySummary.dataPreload !== undefined &&
+                summary.dataPreload !== undefined
+                  ? [
+                      [
+                        dependencySummary.dataPreload.preload,
+                        summary.dataPreload.preload,
+                      ],
+                    ]
+                  : []),
+              ]) {
+                const alias =
+                  path.scope.generateUidIdentifier('forwardPreload');
+                path.unshiftContainer(
+                  'body',
+                  t.importDeclaration(
+                    [
+                      t.importSpecifier(
+                        alias,
+                        t.isValidIdentifier(dependencyName)
+                          ? t.identifier(dependencyName)
+                          : t.stringLiteral(dependencyName),
+                      ),
+                    ],
+                    t.stringLiteral(edge.source),
                   ),
-                ]),
-              );
+                );
+                path.pushContainer(
+                  'body',
+                  t.exportNamedDeclaration(null, [
+                    t.exportSpecifier(
+                      t.cloneNode(alias),
+                      t.isValidIdentifier(exportName)
+                        ? t.identifier(exportName)
+                        : t.stringLiteral(exportName),
+                    ),
+                  ]),
+                );
+              }
             }
           }
         },
@@ -745,6 +763,15 @@ export async function compileServerPreloadGraph(
           fnLoc: null,
           component: exported,
           preload: '__reactPreload_' + exported,
+          ...(summary.dataPreload === undefined ||
+          module.names.has('__reactPreloadData_' + exported)
+            ? {dataPreload: undefined}
+            : {
+                dataPreload: {
+                  ...summary.dataPreload,
+                  preload: '__reactPreloadData_' + exported,
+                },
+              }),
         });
       }
     }

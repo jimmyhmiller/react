@@ -140,6 +140,11 @@ function runPlan(
   );
 }
 
+/** Bounded speculative native callbacks stop before allocating further work. */
+export function checkStep(): void {
+  if (!scheduler().step()) throw new PreloadCancelled();
+}
+
 export function step(): boolean {
   return scheduler().step();
 }

@@ -37,3 +37,26 @@ Reproduce from compiler/:
 ```sh
 node --conditions=react-server packages/babel-plugin-react-compiler/scripts/audit-independent-server-apps.cjs 5 /tmp/react-independent-apps.html
 ```
+
+## Follow-up: automatic proof propagation
+
+Checkpoint `ec7d45edaa` preserves the initial implementation and audit above.
+The follow-up compiler handles literal prop defaults, immutable native collection
+callbacks and Promise.all, record props through components/imports/barrels, readonly
+JSX formatting and spreads, and cached composite helper summaries. Independent
+child groups use their own dependency points. Authored app files remain unchanged.
+
+The five-sample follow-up audit (`/tmp/react-independent-apps-improved.html`, with
+JSON alongside) measured the active dashboard at **107 ms original / 66 ms
+compiled / 67 ms manual**, with 11 identical native operations. The empty dashboard
+measured 64 / 44 / 43 ms with three operations. Missing roots still perform one
+operation. Bookshop (~64 ms) and travel (~86 ms) remain at the manual probe's
+existing dependency depth; neither is evidence of a removable missed I/O layer.
+
+All 225 measured Flight renders matched complete decoded host HTML and exact
+native keys/results, with request caps checked; 45 additional warmups ran. The
+harness now also asserts event ordering: activity and owner operations start
+before task summaries finish. This is a structural scheduling regression, not a
+wall-clock threshold. Original author fingerprints are verified before and after.
+Native batching remains disabled in this audit because these apps offer no bulk
+backend. Separate large scenarios validate explicit bulk endpoints.

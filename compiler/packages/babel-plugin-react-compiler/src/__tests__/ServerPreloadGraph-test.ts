@@ -453,3 +453,57 @@ it.each([
     ),
   ).rejects.toThrow('static object');
 });
+
+it('propagates immutable-record companion requirements through barrels without trusting arbitrary props', async () => {
+  const sources = {
+    '/app/Page.jsx': `import {rows} from 'data';import {Card} from './barrel';export async function Page({id}){const values=await rows(id);return <>{values.map(value=><Card value={value}/>)}</>;}`,
+    '/app/barrel.js': `export {Card} from './Card';`,
+    '/app/Card.jsx': `import {summary} from 'data';import {Owner} from './Owner';export async function Card({value}){const result=await summary(value.id);return <section>{result.count}<Owner id={value.ownerId}/></section>;}`,
+    '/app/Owner.jsx': `import {person} from 'data';export async function Owner({id}){const user=await person(id);return <p>{user.name}</p>;}`,
+  };
+  const options = {
+    resources: [
+      {source: 'data', importSpecifierName: 'rows', result: 'array' as const},
+      {
+        source: 'data',
+        importSpecifierName: 'summary',
+        result: 'immutable-data' as const,
+      },
+      {
+        source: 'data',
+        importSpecifierName: 'person',
+        result: 'immutable-data' as const,
+      },
+    ],
+  };
+  const result = await graph(sources, options);
+  expect(
+    result.modules.get('/app/Card.jsx')!.summaries.get('Card')!.requiresData,
+  ).toBe(true);
+  expect(
+    result.modules.get('/app/barrel.js')!.summaries.get('Card')!.requiresData,
+  ).toBe(true);
+  expect(result.modules.get('/app/Page.jsx')!.code).toContain(
+    '__reactPreload_Card',
+  );
+  expect(result.modules.get('/app/barrel.js')!.code).toContain(
+    '__reactPreload_Card',
+  );
+  const unknown = await graph(
+    {
+      ...sources,
+      '/app/Page.jsx': `import {Card} from './barrel';export function Page({value}){return <Card value={value}/>;}`,
+    },
+    options,
+  );
+  const page = unknown.modules.get('/app/Page.jsx')!;
+  expect(page.summaries.get('Page')!.requiresData).toBe(true);
+  // The proof-only companion may compose another proof-only companion, but
+  // arbitrary original entry must never invoke it.
+  expect(
+    page.code.slice(
+      page.code.indexOf('export function Page'),
+      page.code.indexOf('export {'),
+    ),
+  ).not.toContain('_preload_plan(');
+});

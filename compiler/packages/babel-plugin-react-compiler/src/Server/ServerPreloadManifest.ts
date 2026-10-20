@@ -56,6 +56,7 @@ export async function buildServerPreloadManifest(
       typeof id !== 'string' ||
       summary == null ||
       summary.functionKind !== 'component' ||
+      summary.requiresData === true ||
       summary.planId == null
     ) {
       throw new Error(

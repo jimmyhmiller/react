@@ -65,6 +65,20 @@ export const ServerPreloadsOptionsSchema = z
       .array(
         ImportSchema.extend({
           preload: z.string().min(1),
+          requiresData: z.boolean().default(false),
+          dataPreload: z
+            .strictObject({
+              preload: z.string().min(1),
+              planId: z.string().optional(),
+              complete: z.boolean(),
+              result: z.enum([
+                'unknown',
+                'primitive',
+                'immutable-data',
+                'array',
+              ]),
+            })
+            .optional(),
           planId: z.string().optional(),
           functionKind: z.enum(['component', 'function']).default('component'),
           complete: z.boolean().default(false),
@@ -86,6 +100,19 @@ export const ServerPreloadsOptionsSchema = z
         code: 'custom',
         path: ['runtime'],
         message: 'Route manifests and deferred awaits require a server runtime',
+      });
+    }
+    if (
+      config.runtime === null &&
+      config.components.some(
+        component =>
+          component.requiresData || component.dataPreload !== undefined,
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['runtime'],
+        message: 'Proof-specialized companions require the server plan runtime',
       });
     }
     const seen = new Set<string>();
@@ -138,6 +165,15 @@ export type ServerPreloadEvent =
       fnLoc: t.SourceLocation | null;
       component: string;
       preload: string;
+      requiresData?: boolean;
+      dataPreload?:
+        | {
+            preload: string;
+            planId?: string;
+            complete: boolean;
+            result: 'unknown' | 'primitive' | 'immutable-data' | 'array';
+          }
+        | undefined;
       props: Array<string>;
       functionKind?: 'component' | 'function';
       complete?: boolean;

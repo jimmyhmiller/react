@@ -38,13 +38,13 @@ const apps = [
     id: 'bookshop',
     arrays: ['getStores', 'getReviews'],
     findings:
-      'Already approximately optimal: root book → sibling sections → stock/reviewers/related authors. Store lookups already use Promise.all. Compiler misses map callbacks and formatting-heavy JSX, but the guarded manual probe cannot remove a genuine I/O layer.',
+      'Already approximately optimal: root book → sibling sections → stock/reviewers/related authors. Store lookups already use Promise.all. The compiler now analyzes immutable callbacks and formatting, but neither compilation nor the guarded manual probe can remove a genuine I/O layer.',
   },
   {
     id: 'team-dashboard',
     arrays: ['readProjects', 'readActivity'],
     findings:
-      'A real miss: activity/billing wait behind projects and every task summary, and project owners wait behind task-summary consumption. Their keys were available earlier. The guarded manual probe starts these branches earlier without moving original consumption.',
+      'Previously missed; now optimized automatically: activity/billing begin after organization data and owners begin after projects, overlapping task summaries while preserving original consumption.',
   },
   {
     id: 'travel',
@@ -107,6 +107,7 @@ async function fingerprints() {
 }
 
 async function render(api, fixture, backend) {
+  let ordinal = 0;
   let active = 0,
     peak = 0;
   const queue = [],
@@ -118,6 +119,7 @@ async function render(api, fixture, backend) {
       const job = queue.shift();
       active++;
       peak = Math.max(peak, active);
+      job.call.startOrder = ordinal++;
       job.call.startedMs = performance.now() - start;
       (async () => {
         try {
@@ -128,6 +130,7 @@ async function render(api, fixture, backend) {
         } catch (error) {
           job.reject(error);
         } finally {
+          job.call.endOrder = ordinal++;
           job.call.endedMs = performance.now() - start;
           active--;
           drain();
@@ -202,7 +205,7 @@ function escape(s) {
 }
 function htmlReport(results, snapshots) {
   const data = JSON.stringify(results).replace(/</g, '\\u003c');
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Independent app audit</title><style>body{font:16px system-ui;line-height:1.55;max-width:1200px;margin:36px auto;padding:0 24px;background:#f7f8f5;color:#20312b}select{font:inherit;padding:8px;margin:8px 16px 8px 0}table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;padding:12px;border-bottom:1px solid #ccd5ce}pre{overflow:auto;background:#e8ece7;padding:16px;font-size:12px}iframe{width:100%;height:680px;border:1px solid #ccd5ce;background:white}.note{padding:16px;background:#e8f0e8}summary{cursor:pointer}small{color:#58665e}</style><h1>Independent app audit</h1><p>Three isolated app authors were given feature requests and a standard async React/data boundary, without the optimization objective. Their source was fingerprinted before evaluation and kept unchanged. A separate reviewer assessed schedules without inspecting the compiler.</p><p class="note">Measured through actual Flight rendering. All modes use the same native backend, ${latencyMs} ms synthetic latency per request, and a shared ${cap}-operation cap. No bulk endpoint was invented; batching is off. Reviewed contracts are configuration for existing cached readers, not rewrites of components. Manual probes are separate non-consuming preloads, not compiler output. The explicitly labeled diagnostic mode removes Page prop defaults in a temporary copy only; all fixtures supply those props. It isolates a compiler limitation and is not a general app rewrite.</p><select id="app">${results.map((r, i) => `<option value="${i}">${escape(r.id)}</option>`).join('')}</select><select id="fixture"></select><h2 id="title"></h2><p id="findings"></p><p id="comparison"></p><table><thead><tr><th>Mode</th><th>Median / range</th><th>Native operations</th><th>Unique keys</th><th>Peak I/O</th><th>Extracted read sites</th></tr></thead><tbody id="rows"></tbody></table><small>${samples} measured samples and one discarded warmup per fixture/mode. Every measured render is decoded into static HTML and compared with original HTML; expected text, exact native keys/results and request caps are checked. Timings are observations, not production predictions. This small agent-built corpus is a discovery exercise, not broad compatibility evidence.</small><h2>Rendered app</h2><iframe id="preview" title="Original rendered app"></iframe><details><summary>Authored component source</summary><pre id="source"></pre></details><details><summary>Separate manual preload probe</summary><pre id="probe"></pre></details><details><summary>Compiler retain/skip diagnostics</summary><pre id="diagnostics"></pre></details><details><summary>Source fingerprints</summary><pre>${escape(JSON.stringify(snapshots, null, 2))}</pre></details><script type="application/json" id="data">${data}</script><script>const data=JSON.parse(document.getElementById('data').textContent),el=id=>document.getElementById(id);function fixtures(){el('fixture').replaceChildren();for(const [i,f]of data[Number(el('app').value)].fixtures.entries()){const option=document.createElement('option');option.value=i;option.textContent=f.name;el('fixture').append(option);}render();}function render(){const app=data[Number(el('app').value)],fixture=app.fixtures[Number(el('fixture').value)];el('title').textContent=fixture.name;el('findings').textContent=app.findings;el('comparison').textContent='Original / compiler: '+(fixture.rows[0].medianMs/fixture.rows[2].medianMs).toFixed(2)+'×. Original / manual probe: '+(fixture.rows[0].medianMs/fixture.rows[3].medianMs).toFixed(2)+'×.';el('source').textContent=app.source;el('probe').textContent=app.probe;el('diagnostics').textContent=JSON.stringify(app.analysis,null,2);el('preview').srcdoc=fixture.rows[0].html;el('rows').replaceChildren();for(const r of fixture.rows){const tr=document.createElement('tr');for(const v of [r.mode,r.medianMs.toFixed(1)+' ms ('+r.rangeMs.map(n=>n.toFixed(1)).join('–')+')',r.operations,r.uniqueKeys,r.peakConcurrency,r.extractedReads]){const td=document.createElement('td');td.textContent=v;tr.append(td);}tr.onclick=()=>{el('preview').srcdoc=r.html;};el('rows').append(tr);}}el('app').onchange=fixtures;el('fixture').onchange=render;fixtures();</script></html>`;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Independent app audit</title><style>body{font:16px system-ui;line-height:1.55;max-width:1200px;margin:36px auto;padding:0 24px;background:#f7f8f5;color:#20312b}select{font:inherit;padding:8px;margin:8px 16px 8px 0}table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;padding:12px;border-bottom:1px solid #ccd5ce}pre{overflow:auto;background:#e8ece7;padding:16px;font-size:12px}iframe{width:100%;height:680px;border:1px solid #ccd5ce;background:white}.note{padding:16px;background:#e8f0e8}summary{cursor:pointer}small{color:#58665e}</style><h1>Independent app audit</h1><p>Three isolated app authors were given feature requests and a standard async React/data boundary, without the optimization objective. Their source was fingerprinted before evaluation and kept unchanged. A separate reviewer assessed schedules without inspecting the compiler.</p><p class="note">Measured through actual Flight rendering. All modes use the same native backend, ${latencyMs} ms synthetic latency per request, and a shared ${cap}-operation cap. No bulk endpoint was invented; batching is off. Reviewed contracts are configuration for existing cached readers, not rewrites of components. Manual probes are separate non-consuming preloads, not compiler output. The explicitly labeled diagnostic mode removes Page prop defaults in a temporary copy only; all fixtures supply those props. It checks that explicit props and literal defaults receive equivalent optimization.</p><select id="app">${results.map((r, i) => `<option value="${i}">${escape(r.id)}</option>`).join('')}</select><select id="fixture"></select><h2 id="title"></h2><p id="findings"></p><p id="comparison"></p><table><thead><tr><th>Mode</th><th>Median / range</th><th>Native operations</th><th>Unique keys</th><th>Peak I/O</th><th>Extracted read sites</th></tr></thead><tbody id="rows"></tbody></table><small>${samples} measured samples and one discarded warmup per fixture/mode. Every measured render is decoded into static HTML and compared with original HTML; expected text, exact native keys/results and request caps are checked. Timings are observations, not production predictions. This small agent-built corpus is a discovery exercise, not broad compatibility evidence.</small><h2>Rendered app</h2><iframe id="preview" title="Original rendered app"></iframe><details><summary>Authored component source</summary><pre id="source"></pre></details><details><summary>Separate manual preload probe</summary><pre id="probe"></pre></details><details><summary>Compiler retain/skip diagnostics</summary><pre id="diagnostics"></pre></details><details><summary>Source fingerprints</summary><pre>${escape(JSON.stringify(snapshots, null, 2))}</pre></details><script type="application/json" id="data">${data}</script><script>const data=JSON.parse(document.getElementById('data').textContent),el=id=>document.getElementById(id);function fixtures(){el('fixture').replaceChildren();for(const [i,f]of data[Number(el('app').value)].fixtures.entries()){const option=document.createElement('option');option.value=i;option.textContent=f.name;el('fixture').append(option);}render();}function render(){const app=data[Number(el('app').value)],fixture=app.fixtures[Number(el('fixture').value)];el('title').textContent=fixture.name;el('findings').textContent=app.findings;el('comparison').textContent='Original / compiler: '+(fixture.rows[0].medianMs/fixture.rows[2].medianMs).toFixed(2)+'×. Original / manual probe: '+(fixture.rows[0].medianMs/fixture.rows[3].medianMs).toFixed(2)+'×.';el('source').textContent=app.source;el('probe').textContent=app.probe;el('diagnostics').textContent=JSON.stringify(app.analysis,null,2);el('preview').srcdoc=fixture.rows[0].html;el('rows').replaceChildren();for(const r of fixture.rows){const tr=document.createElement('tr');for(const v of [r.mode,r.medianMs.toFixed(1)+' ms ('+r.rangeMs.map(n=>n.toFixed(1)).join('–')+')',r.operations,r.uniqueKeys,r.peakConcurrency,r.extractedReads]){const td=document.createElement('td');td.textContent=v;tr.append(td);}tr.onclick=()=>{el('preview').srcdoc=r.html;};el('rows').append(tr);}}el('app').onchange=fixtures;el('fixture').onchange=render;fixtures();</script></html>`;
 }
 
 (async () => {
@@ -403,6 +406,13 @@ function htmlReport(results, snapshots) {
                 reference.canonicalCalls,
                 'Native keys/results changed'
               );
+            }
+            if (app.id === 'team-dashboard' && mode === 2 && fixture.props.organizationId === 'northstar') {
+              const activity = run.calls.find(c => JSON.parse(c.key)[0] === 'activity');
+              const tasks = run.calls.filter(c => JSON.parse(c.key)[0] === 'tasks');
+              assert(tasks.length > 0 && activity.startOrder < Math.min(...tasks.map(c => c.endOrder)), 'Activity must overlap task summaries');
+              const owner = run.calls.find(c => c.key === JSON.stringify(['person', 'maya']));
+              assert(owner.startOrder < Math.min(...tasks.map(c => c.endOrder)), 'Owner must overlap task summaries');
             }
             delete run.wire;
             run.html = html;
