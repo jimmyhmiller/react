@@ -1,0 +1,23 @@
+{
+  "bookshop": {
+    "Page.jsx": "9e0f4121237f8aef0d11f963d758d53f43946b851bbaace4662d00dd46abd160",
+    "README.md": "8c1d9a09a1908688d9a8e08f9ea9e11a9ba65c95da65370bfa9173e825f65993",
+    "backend.js": "07d3b8634450917966ddc0834d0688bd23a39cce52699a255496e36ecfd1aa60",
+    "data.js": "a99772bcb07bea1ea368b005c6dc74a3721f7ee742921a45e830af2fae311a56",
+    "fixtures.json": "afbfb04a8ec29e1094fb3bc5d8c000b1ed61d4698195126b7b888341c92f2156"
+  },
+  "team-dashboard": {
+    "Page.jsx": "8d066d16e8da8f60cf6dcd538abef344d7c7fa9f8958b9d44442a4f9391aeb04",
+    "README.md": "6405e12de59bcc534606a3c76daf1cd2c9038e1f51748d414ba11f17964c268f",
+    "backend.js": "e3ed7f5f87e5ada660618c72f4acf96468f237dac698f5a279576f8d06f88f18",
+    "data.js": "75cce91c23cd7b25108edfe940adfb97f525afadcb3a3b7ec58529593b80562e",
+    "fixtures.json": "fff01149eb0111f0c03f802228e0e398a0f153cee9fa02c132530a7dc8525b94"
+  },
+  "travel": {
+    "Page.jsx": "58f023aa69f09708d1e445a84586ed7a3cbb11c40f45e2f0dca0594465d9d71b",
+    "README.md": "50d9bf2cc0ea6436dd65361c0e45da53f1648a6465315294df2c8071f4e693a6",
+    "backend.js": "c2d96340e41fe71d90644d9aadcd98090fd2a8c17f1c1592c4c67c35d914f837",
+    "data.js": "7ec46544795b994e8116a0ca21a91e57ae1003cb10853fd8723d756e9fabdd52",
+    "fixtures.json": "52966c616762941f0f9d0c33d8e720f9f89a7f9f0b59335db7459e11d19a4bf2"
+  }
+}

@@ -7,19 +7,26 @@
   "typings": "dist/index.d.ts",
   "files": [
     "dist",
-    "src"
+    "src",
+    "server.js",
+    "server.d.ts"
   ],
   "peerDependencies": {
     "react": "^17.0.0 || ^18.0.0 || ^19.0.0 || ^0.0.0-experimental"
   },
   "scripts": {
     "build": "rimraf dist && tsup",
-    "test": "echo 'no tests'",
+    "test": "jest --config jest.config.js --runInBand",
     "watch": "yarn build --watch"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/react/react.git",
     "directory": "compiler/packages/react-compiler-runtime"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.0.3",
+    "jest": "^29.0.3",
+    "ts-jest": "^29.1.1"
   }
 }

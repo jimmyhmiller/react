@@ -1,0 +1,17 @@
+[
+  {
+    "name": "confirmed Porto weekend",
+    "props": {"tripId": "porto-weekend"},
+    "expectedText": ["WANDER / YOUR TRIPS", "Porto, Portugal", "May 16–18, 2027", "A slow weekend in Porto", "River walks, neighborhood kitchens, and time to get a little lost.", "Ready to explore", "Sunday, May 16", "Settle into the riverside", "Sunny intervals", "14–22°C", "Pack a light layer for the river breeze.", "Check in at Casa Clara", "14:00", "45 minutes", "Free", "Casa Clara", "Miragaia", "Rua de Miragaia 42", "A small guesthouse with a sunny shared terrace.", "Leave your bags and pick up the neighborhood map.", "Ribeira photo walk", "16:00", "90 minutes", "€12 per traveler", "Praça da Ribeira", "Ribeira", "Colorful riverfront lanes overlooking the Douro.", "Meet beside the fountain; comfortable shoes recommended.", "Monday, May 17", "Taste your way uphill", "Light afternoon showers", "15–20°C", "A small umbrella will come in handy.", "Bolhão tasting tour", "10:00", "120 minutes", "€38 per traveler", "Mercado do Bolhão", "Rua Formosa 322", "A restored market filled with independent food stalls.", "Includes coffee, pastries, and a seasonal lunch.", "An afternoon in the gardens", "15:30", "60 minutes", "Jardins do Palácio de Cristal", "Massarelos", "Rua de Dom Manuel II", "Shaded paths, peacocks, and wide river views.", "Bring a book. There is no reservation to rush for.", "Your local host", "Inês Ferreira", "Portuguese and English", "Take the tram early, then walk back along the river.", "At a glance", "2 saved travelers", "2 planned days", "4 activities", "315 minutes planned", "€100 for the group", "Activity prices only. Accommodation and transport are separate.", "Saved travelers", "Maya Chen", "Vegetarian · loves architecture", "Leo Martins", "Coffee stops · light walking pace", "Getting there", "Airport metro", "Line E to Trindade · about 30 minutes", "€3 per traveler", "€6 for the group", "Shared taxi", "Airport to Casa Clara · about 25 minutes", "€28 for the group", "Made for unhurried days. All times are local."]
+  },
+  {
+    "name": "cancelled Alpine escape",
+    "props": {"tripId": "alpine-escape"},
+    "expectedText": ["WANDER / YOUR TRIPS", "Chamonix, France", "June 4–6, 2027", "Alpine escape", "This trip was cancelled because the mountain lodge is closed.", "Cancelled trip", "Your plans are on pause", "Activities and transport are no longer scheduled. Your saved travelers and host details are kept below.", "Your local host", "Camille Laurent", "French and English", "Save the mountain trails for a clear morning.", "At a glance", "1 saved traveler", "0 planned days", "0 activities", "0 minutes planned", "€0 for the group", "Activity prices only. Accommodation and transport are separate.", "Saved travelers", "Maya Chen", "Vegetarian · loves architecture", "Made for unhurried days. All times are local."]
+  },
+  {
+    "name": "missing itinerary",
+    "props": {"tripId": "unknown-trip"},
+    "expectedText": ["WANDER / YOUR TRIPS", "Trip not found", "We could not find a saved itinerary for this trip.", "Try Porto weekend or Alpine escape from your saved trips."]
+  }
+]

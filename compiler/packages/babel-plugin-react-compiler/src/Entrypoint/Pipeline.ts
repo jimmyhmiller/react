@@ -8,7 +8,7 @@
 import {NodePath} from '@babel/traverse';
 import * as t from '@babel/types';
 import prettyFormat from 'pretty-format';
-import {CompilerOutputMode, Logger, ProgramContext} from '.';
+import {FunctionOutputMode, Logger, ProgramContext} from '.';
 import {CompilerError} from '../CompilerError';
 import {Err, Ok, Result} from '../Utils/Result';
 import {
@@ -114,7 +114,7 @@ function run(
   >,
   config: EnvironmentConfig,
   fnType: ReactFunctionType,
-  mode: CompilerOutputMode,
+  mode: FunctionOutputMode,
   programContext: ProgramContext,
   logger: Logger | null,
   filename: string | null,
@@ -585,7 +585,7 @@ export function compileFn(
   >,
   config: EnvironmentConfig,
   fnType: ReactFunctionType,
-  mode: CompilerOutputMode,
+  mode: FunctionOutputMode,
   programContext: ProgramContext,
   logger: Logger | null,
   filename: string | null,

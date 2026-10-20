@@ -26,12 +26,15 @@ import {
   validateRestrictedImports,
 } from './Imports';
 import {
-  CompilerOutputMode,
+  FunctionOutputMode,
   CompilerReactTarget,
   ParsedPluginOptions,
   PluginOptions,
 } from './Options';
 import {compileFn} from './Pipeline';
+import {compileServerPreloads} from '../Optimization/ServerPreloads';
+import {discoverServerReads} from '../Optimization/ServerReadDeclarations';
+import {prepareDeferredServerAwaits} from '../Optimization/DeferServerAwait';
 import {
   filterSuppressionsThatAffectFunction,
   findProgramSuppressions,
@@ -41,6 +44,8 @@ import {GeneratedSource} from '../HIR';
 import {Err, Ok, Result} from '../Utils/Result';
 
 export type CompilerPass = {
+  /** Graph-wide advisory scheduling paths supplied by the server build adapter. */
+  serverPreloadCriticalPaths?: Map<string, Array<string>>;
   opts: ParsedPluginOptions;
   filename: string | null;
   comments: Array<t.CommentBlock | t.CommentLine>;
@@ -401,6 +406,14 @@ export function compileProgram(
   program: NodePath<t.Program>,
   pass: CompilerPass,
 ): void {
+  if (pass.opts.serverPreloads !== null && pass.opts.outputMode !== 'server') {
+    CompilerError.throwInvalidConfig({
+      reason: 'serverPreloads requires outputMode: "server"',
+      description: 'Only enable preloading in the Server Component build.',
+      suggestions: null,
+      loc: null,
+    });
+  }
   /**
    * This is directly invoked by the react-compiler babel plugin, so exceptions
    * thrown by this function will fail the babel build.
@@ -421,6 +434,38 @@ export function compileProgram(
   );
   if (restrictedImportsErr) {
     handleError(restrictedImportsErr, pass, null);
+    return;
+  }
+  if (pass.opts.outputMode === 'server') {
+    if (pass.opts.serverPreloads != null) {
+      const config = pass.opts.serverPreloads;
+      const local = config.localResources.map(entry => ({...entry}));
+      for (const read of discoverServerReads(program, pass.opts)) {
+        const previous = local.find(entry => entry.name === read.name);
+        if (
+          previous !== undefined &&
+          previous.result !== 'unknown' &&
+          read.result !== 'unknown' &&
+          previous.result !== read.result
+        ) {
+          CompilerError.throwInvalidConfig({
+            reason: 'Conflicting server read contract',
+            description: read.name,
+            suggestions: null,
+            loc: null,
+          });
+        }
+        if (previous === undefined) local.push(read);
+        else if (previous.result === 'unknown') previous.result = read.result;
+      }
+      pass.opts = {
+        ...pass.opts,
+        serverPreloads: {...config, localResources: local},
+      };
+    }
+    const finishDeferredAwaits = prepareDeferredServerAwaits(program, pass);
+    compileServerPreloads(program, pass);
+    finishDeferredAwaits();
     return;
   }
   /*
@@ -461,7 +506,7 @@ export function compileProgram(
   const compiledFns: Array<CompileResult> = [];
 
   // outputMode takes precedence if specified
-  const outputMode: CompilerOutputMode =
+  const outputMode: FunctionOutputMode =
     pass.opts.outputMode ?? (pass.opts.noEmit ? 'lint' : 'client');
   while (queue.length !== 0) {
     const current = queue.shift()!;
@@ -612,7 +657,7 @@ function processFn(
   fn: BabelFn,
   fnType: ReactFunctionType,
   programContext: ProgramContext,
-  outputMode: CompilerOutputMode,
+  outputMode: FunctionOutputMode,
 ): null | CodegenFunction {
   let directives: {
     optIn: t.Directive | null;
@@ -716,7 +761,7 @@ function tryCompileFunction(
   fn: BabelFn,
   fnType: ReactFunctionType,
   programContext: ProgramContext,
-  outputMode: CompilerOutputMode,
+  outputMode: FunctionOutputMode,
 ):
   | {kind: 'compile'; compiledFn: CodegenFunction}
   | {kind: 'error'; error: unknown} {

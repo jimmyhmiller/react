@@ -17,6 +17,12 @@ import {
 import {hasOwnProperty} from '../Utils/utils';
 import {fromZodError} from 'zod-validation-error/v4';
 import {CompilerPipelineValue} from './Pipeline';
+import {ServerPreloadsOptionsSchema} from '../Optimization/ServerPreloads';
+import type {
+  ServerPreloadsOptions,
+  ParsedServerPreloadsOptions,
+  ServerPreloadEvent,
+} from '../Optimization/ServerPreloads';
 
 const PanicThresholdOptionsSchema = z.enum([
   /*
@@ -116,6 +122,9 @@ export type PluginOptions = Partial<{
    */
   outputMode: CompilerOutputMode | null;
 
+  /** Explicit resource contracts for the opt-in Server Component build. */
+  serverPreloads: ServerPreloadsOptions | null;
+
   /*
    * Determines the strategy for determining which functions to compile. Note that regardless of
    * which mode is enabled, a component can be opted out by adding the string literal
@@ -175,8 +184,11 @@ export type PluginOptions = Partial<{
 }>;
 
 export type ParsedPluginOptions = Required<
-  Omit<PluginOptions, 'environment'>
-> & {environment: EnvironmentConfig};
+  Omit<PluginOptions, 'environment' | 'serverPreloads'>
+> & {
+  environment: EnvironmentConfig;
+  serverPreloads: ParsedServerPreloadsOptions | null;
+};
 
 const CompilerReactTargetSchema = z.union([
   z.literal('17'),
@@ -219,6 +231,8 @@ const CompilationModeSchema = z.enum([
 export type CompilationMode = z.infer<typeof CompilationModeSchema>;
 
 const CompilerOutputModeSchema = z.enum([
+  // Preserve Server Component bodies and insert eligible cached data preloads.
+  'server',
   // Build optimized for SSR, with client features removed
   'ssr',
   // Build optimized for the client, with auto memoization
@@ -228,6 +242,8 @@ const CompilerOutputModeSchema = z.enum([
 ]);
 
 export type CompilerOutputMode = z.infer<typeof CompilerOutputModeSchema>;
+// Server preload plans use the program entrypoint, not reactive memo codegen.
+export type FunctionOutputMode = Exclude<CompilerOutputMode, 'server'>;
 
 /**
  * Represents 'events' that may occur during compilation. Events are only
@@ -243,6 +259,7 @@ export type CompilerOutputMode = z.infer<typeof CompilerOutputModeSchema>;
  *   babel or other unhandled exceptions).
  */
 export type LoggerEvent =
+  | ServerPreloadEvent
   | CompileSuccessEvent
   | CompileErrorEvent
   | CompileDiagnosticEvent
@@ -317,6 +334,7 @@ export const defaultOptions: ParsedPluginOptions = {
   gating: null,
   noEmit: false,
   outputMode: null,
+  serverPreloads: null,
   dynamicGating: null,
   eslintSuppressionRules: null,
   flowSuppressions: true,
@@ -341,6 +359,23 @@ export function parsePluginOptions(obj: unknown): ParsedPluginOptions {
     }
     if (isCompilerFlag(key)) {
       switch (key) {
+        case 'serverPreloads': {
+          if (value == null) {
+            parsedOptions[key] = null;
+            break;
+          }
+          const result = ServerPreloadsOptionsSchema.safeParse(value);
+          if (!result.success) {
+            CompilerError.throwInvalidConfig({
+              reason: 'Invalid serverPreloads configuration',
+              description: fromZodError(result.error).toString(),
+              suggestions: null,
+              loc: null,
+            });
+          }
+          parsedOptions[key] = result.data;
+          break;
+        }
         case 'environment': {
           const environmentResult = parseEnvironmentConfig(value);
           if (environmentResult.isErr()) {

@@ -8,12 +8,15 @@
 import {defineConfig} from 'tsup';
 
 export default defineConfig({
-  entry: ['./src/index.ts'],
+  entry: ['./src/index.ts', './src/server.ts'],
   outDir: './dist',
   external: ['react'],
   splitting: false,
   sourcemap: true,
-  dts: false,
+  dts: {
+    entry: ['./src/server.ts'],
+    compilerOptions: {ignoreDeprecations: '5.0'},
+  },
   bundle: true,
   format: 'cjs',
   platform: 'node',

@@ -1,0 +1,34 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`emits the cached preload pattern without altering the original awaits 1`] = `
+""use strict";
+"use react server preloads";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.Page = Page;
+exports.__reactPreload_Page = _preloadPage;
+var _data = require("data");
+async function Page({
+  id
+}) {
+  try {
+    (0, _data.getReviews)(id).then(void 0, () => {});
+  } catch {}
+  const product = await (0, _data.getProduct)(id);
+  const reviews = await (0, _data.getReviews)(id);
+  return {
+    product,
+    reviews
+  };
+}
+function _preloadPage(_id) {
+  try {
+    (0, _data.getProduct)(_id).then(void 0, () => {});
+  } catch {}
+  try {
+    (0, _data.getReviews)(_id).then(void 0, () => {});
+  } catch {}
+}"
+`;

@@ -54,6 +54,10 @@ export {
   printReactiveFunctionWithOutlined,
 } from './ReactiveScopes';
 export {parseConfigPragmaForTests} from './Utils/TestUtils';
+export type {
+  ServerPreloadsOptions,
+  ServerPreloadEvent,
+} from './Optimization/ServerPreloads';
 declare global {
   // @internal
   let __DEV__: boolean | null | undefined;
@@ -61,3 +65,21 @@ declare global {
 
 import BabelPluginReactCompiler from './Babel/BabelPlugin';
 export default BabelPluginReactCompiler;
+
+export type {
+  ServerPreloadGraphOptions,
+  ServerPreloadResolution,
+  ServerPreloadGraph,
+  CompiledServerPreloadModule,
+  ServerPreloadSummary,
+  ServerPreloadDiagnostic,
+} from './Server/CompileServerPreloadGraph';
+export type {ServerPreloadsEsbuildOptions} from './Server/ServerPreloadsEsbuildPlugin';
+
+export {renderServerPreloadLens} from './Server/ServerPreloadLens';
+export type {ServerPreloadLensOptions} from './Server/ServerPreloadLens';
+export type {
+  ServerPreloadDependencyGraph,
+  ServerPreloadGraphNode,
+  ServerPreloadGraphEdge,
+} from './Server/ServerPreloadAnalysis';

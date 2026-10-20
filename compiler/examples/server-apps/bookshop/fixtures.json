@@ -1,0 +1,17 @@
+[
+  {
+    "name": "available-novel-with-community-reviews",
+    "props": {"bookId": "tidal-atlas"},
+    "expectedText": ["The Tidal Atlas", "$24.00", "About Mara Vale", "Port Townsend, Washington", "Available for pickup", "Harbor Books", "6 copies in stock", "Maple Street Books", "Out of stock", "Station Bookroom", "2 copies in stock", "4.5/5 from 2 reader reviews", "A coastline you can feel", "Nora Chen", "Seattle, WA", "12 reviews", "Worth slowing down for", "Sam Rivera", "Portland, OR", "8 reviews", "Field Notes for a Quiet World", "Eli Park", "The Winter Orchard"]
+  },
+  {
+    "name": "sold-out-nature-book-with-no-reviews",
+    "props": {"bookId": "field-notes"},
+    "expectedText": ["Field Notes for a Quiet World", "$18.00", "About Eli Park", "Asheville, North Carolina", "Currently unavailable for pickup", "Harbor Books", "Maple Street Books", "Station Bookroom", "Out of stock", "No reviews yet.", "Keep a good story going", "The Tidal Atlas", "Mara Vale"]
+  },
+  {
+    "name": "missing-book",
+    "props": {"bookId": "unlisted-book"},
+    "expectedText": ["LEAF & LANTERN", "That book is off our shelves", "We could not find a book with that reference.", "Discover The Tidal Atlas", "Good books. Local shelves."]
+  }
+]

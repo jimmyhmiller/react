@@ -15,7 +15,7 @@ import {
   ErrorCategory,
 } from '../CompilerError';
 import {
-  CompilerOutputMode,
+  FunctionOutputMode,
   Logger,
   ProgramContext,
   formatDetailForLogging,
@@ -546,7 +546,7 @@ export class Environment {
   code: string | null;
   config: EnvironmentConfig;
   fnType: ReactFunctionType;
-  outputMode: CompilerOutputMode;
+  outputMode: FunctionOutputMode;
   programContext: ProgramContext;
 
   #contextIdentifiers: Set<t.Identifier>;
@@ -564,7 +564,7 @@ export class Environment {
   constructor(
     scope: BabelScope,
     fnType: ReactFunctionType,
-    outputMode: CompilerOutputMode,
+    outputMode: FunctionOutputMode,
     config: EnvironmentConfig,
     contextIdentifiers: Set<t.Identifier>,
     parentFunction: NodePath<t.Function>, // the outermost function being compiled

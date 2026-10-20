@@ -316,3 +316,7 @@ The pipeline is fault-tolerant: all passes run to completion, accumulating error
 - [MUTABILITY_ALIASING_MODEL.md](../../src/Inference/MUTABILITY_ALIASING_MODEL.md): Detailed aliasing model docs
 - [Pipeline.ts](../../src/Entrypoint/Pipeline.ts): Pass ordering and orchestration
 - [HIR.ts](../../src/HIR/HIR.ts): Core data structure definitions
+
+## Server Component preload plans
+
+The opt-in `server` program entrypoint is documented in [Server data preloads](56-serverPreloads.md). It runs separately from the reactive memoization pipeline above. Ordinary preloading preserves consumption; explicitly opted-in deferred props can move a tail await into an existing Suspense boundary.
